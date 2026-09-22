@@ -1,0 +1,355 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000021 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000010;
+			remoteInfo = Saury;
+		};
+		A10000000000000000000023 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = A10000000000000000000012; remoteInfo = SauryShare; };
+		A10000000000000000000024 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = A10000000000000000000013; remoteInfo = SauryWidget; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000090 /* SauryShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* SauryShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000091 /* SauryWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* SauryWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000030 /* Saury.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Saury.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000031 /* SauryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SauryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000032 /* SauryShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SauryShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000033 /* SauryWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SauryWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000040 /* Saury */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Saury; sourceTree = "<group>"; };
+		A10000000000000000000041 /* SauryTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = SauryTests; sourceTree = "<group>"; };
+		A10000000000000000000042 /* SauryShare */ = {isa = PBXFileSystemSynchronizedRootGroup; path = SauryShare; sourceTree = "<group>"; };
+		A10000000000000000000043 /* SauryWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; path = SauryWidget; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000050 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000051 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000052 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000053 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000040 /* Saury */,
+				A10000000000000000000041 /* SauryTests */,
+				A10000000000000000000042 /* SauryShare */,
+				A10000000000000000000043 /* SauryWidget */,
+				A10000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000030 /* Saury.app */,
+				A10000000000000000000031 /* SauryTests.xctest */,
+				A10000000000000000000032 /* SauryShare.appex */,
+				A10000000000000000000033 /* SauryWidget.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000010 /* Saury */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000070 /* Build configuration list for PBXNativeTarget "Saury" */;
+			buildPhases = (
+				A10000000000000000000060 /* Sources */,
+				A10000000000000000000050 /* Frameworks */,
+				A10000000000000000000062 /* Resources */,
+				A10000000000000000000066 /* Embed App Extensions */,
+			);
+			buildRules = ();
+			dependencies = (A10000000000000000000025 /* SauryShare */, A10000000000000000000026 /* SauryWidget */);
+			fileSystemSynchronizedGroups = (A10000000000000000000040 /* Saury */);
+			name = Saury;
+			packageProductDependencies = ();
+			productName = Saury;
+			productReference = A10000000000000000000030 /* Saury.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000011 /* SauryTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000071 /* Build configuration list for PBXNativeTarget "SauryTests" */;
+			buildPhases = (
+				A10000000000000000000061 /* Sources */,
+				A10000000000000000000051 /* Frameworks */,
+				A10000000000000000000063 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = (A10000000000000000000022 /* PBXTargetDependency */);
+			fileSystemSynchronizedGroups = (A10000000000000000000041 /* SauryTests */);
+			name = SauryTests;
+			packageProductDependencies = ();
+			productName = SauryTests;
+			productReference = A10000000000000000000031 /* SauryTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A10000000000000000000012 /* SauryShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000073 /* Build configuration list for PBXNativeTarget "SauryShare" */;
+			buildPhases = (A10000000000000000000064 /* Sources */, A10000000000000000000052 /* Frameworks */, A10000000000000000000067 /* Resources */);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A10000000000000000000042 /* SauryShare */);
+			name = SauryShare;
+			packageProductDependencies = ();
+			productName = SauryShare;
+			productReference = A10000000000000000000032 /* SauryShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A10000000000000000000013 /* SauryWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000074 /* Build configuration list for PBXNativeTarget "SauryWidget" */;
+			buildPhases = (A10000000000000000000065 /* Sources */, A10000000000000000000053 /* Frameworks */, A10000000000000000000068 /* Resources */);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A10000000000000000000043 /* SauryWidget */);
+			name = SauryWidget;
+			packageProductDependencies = ();
+			productName = SauryWidget;
+			productReference = A10000000000000000000033 /* SauryWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2630;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					A10000000000000000000010 = {CreatedOnToolsVersion = 26.3; };
+					A10000000000000000000011 = {CreatedOnToolsVersion = 26.3; TestTargetID = A10000000000000000000010; };
+					A10000000000000000000012 = {CreatedOnToolsVersion = 26.3; };
+					A10000000000000000000013 = {CreatedOnToolsVersion = 26.3; };
+				};
+			};
+			buildConfigurationList = A10000000000000000000072 /* Build configuration list for PBXProject "Saury" */;
+			developmentRegion = zh_Hans;
+			hasScannedForEncodings = 0;
+			knownRegions = (Base, en, zh_Hans);
+			mainGroup = A10000000000000000000002;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A10000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A10000000000000000000010 /* Saury */, A10000000000000000000011 /* SauryTests */, A10000000000000000000012 /* SauryShare */, A10000000000000000000013 /* SauryWidget */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000062 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000063 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000067 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000068 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000066 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (A10000000000000000000090 /* SauryShare.appex in Embed App Extensions */, A10000000000000000000091 /* SauryWidget.appex in Embed App Extensions */); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000060 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000061 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000064 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000065 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000022 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A10000000000000000000010 /* Saury */; targetProxy = A10000000000000000000021 /* PBXContainerItemProxy */; };
+		A10000000000000000000025 /* SauryShare */ = {isa = PBXTargetDependency; target = A10000000000000000000012 /* SauryShare */; targetProxy = A10000000000000000000023 /* PBXContainerItemProxy */; };
+		A10000000000000000000026 /* SauryWidget */ = {isa = PBXTargetDependency; target = A10000000000000000000013 /* SauryWidget */; targetProxy = A10000000000000000000024 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000080 /* Debug */ = {
+	buildSettings = {
+		"ASSETCATALOG_COMPILER_APPICON_NAME" = AppIcon;
+		"ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME" = AccentColor;
+		"CODE_SIGN_ENTITLEMENTS" = "Saury/App/Saury.entitlements";
+		"CODE_SIGN_STYLE" = Automatic;
+		"CURRENT_PROJECT_VERSION" = 4;
+		"ENABLE_PREVIEWS" = YES;
+		"GENERATE_INFOPLIST_FILE" = YES;
+		"INFOPLIST_KEY_CFBundleDisplayName" = "\U671f\U89c1";
+		"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.productivity";
+		"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = YES;
+		"INFOPLIST_KEY_UILaunchScreen_Generation" = YES;
+		"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+		"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = UIInterfaceOrientationPortrait;
+		"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
+		"LD_RUNPATH_SEARCH_PATHS" = "$(inherited) @executable_path/Frameworks";
+		"MARKETING_VERSION" = "1.0";
+		"PRODUCT_BUNDLE_IDENTIFIER" = "com.guofeng.saury";
+		"PRODUCT_NAME" = "$(TARGET_NAME)";
+		"SWIFT_EMIT_LOC_STRINGS" = YES;
+		"SWIFT_VERSION" = "5.0";
+		"TARGETED_DEVICE_FAMILY" = "1,2";
+	};
+	isa = XCBuildConfiguration;
+	name = Debug;
+};
+		A10000000000000000000081 /* Release */ = {
+	buildSettings = {
+		"ASSETCATALOG_COMPILER_APPICON_NAME" = AppIcon;
+		"ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME" = AccentColor;
+		"CODE_SIGN_ENTITLEMENTS" = "Saury/App/Saury.entitlements";
+		"CODE_SIGN_STYLE" = Automatic;
+		"CURRENT_PROJECT_VERSION" = 4;
+		"GENERATE_INFOPLIST_FILE" = YES;
+		"INFOPLIST_KEY_CFBundleDisplayName" = "\U671f\U89c1";
+		"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.productivity";
+		"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = YES;
+		"INFOPLIST_KEY_UILaunchScreen_Generation" = YES;
+		"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+		"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = UIInterfaceOrientationPortrait;
+		"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
+		"LD_RUNPATH_SEARCH_PATHS" = "$(inherited) @executable_path/Frameworks";
+		"MARKETING_VERSION" = "1.0";
+		"PRODUCT_BUNDLE_IDENTIFIER" = "com.guofeng.saury";
+		"PRODUCT_NAME" = "$(TARGET_NAME)";
+		"SWIFT_EMIT_LOC_STRINGS" = YES;
+		"SWIFT_VERSION" = "5.0";
+		"TARGETED_DEVICE_FAMILY" = "1,2";
+	};
+	isa = XCBuildConfiguration;
+	name = Release;
+};
+		A10000000000000000000082 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+			BUNDLE_LOADER = "$(TEST_HOST)";
+			CODE_SIGN_STYLE = Automatic;
+			GENERATE_INFOPLIST_FILE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.tests;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = "1,2";
+			TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Saury.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Saury";
+		}; name = Debug; };
+		A10000000000000000000083 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+			BUNDLE_LOADER = "$(TEST_HOST)";
+			CODE_SIGN_STYLE = Automatic;
+			GENERATE_INFOPLIST_FILE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.tests;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = "1,2";
+			TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Saury.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Saury";
+		}; name = Release; };
+		A10000000000000000000084 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			COPY_PHASE_STRIP = NO;
+			DEBUG_INFORMATION_FORMAT = dwarf;
+			ENABLE_TESTABILITY = YES;
+			GCC_C_LANGUAGE_STANDARD = gnu17;
+			GCC_NO_COMMON_BLOCKS = YES;
+			GCC_OPTIMIZATION_LEVEL = 0;
+			ONLY_ACTIVE_ARCH = YES;
+			SDKROOT = iphoneos;
+			SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+			SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+		}; name = Debug; };
+		A10000000000000000000085 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			COPY_PHASE_STRIP = NO;
+			DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+			ENABLE_NS_ASSERTIONS = NO;
+			GCC_C_LANGUAGE_STANDARD = gnu17;
+			GCC_NO_COMMON_BLOCKS = YES;
+			SDKROOT = iphoneos;
+			SWIFT_COMPILATION_MODE = wholemodule;
+			VALIDATE_PRODUCT = YES;
+		}; name = Release; };
+		A10000000000000000000086 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = SauryShare/SauryShare.entitlements;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 4;
+			INFOPLIST_FILE = Config/SauryShare-Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.share;
+			PRODUCT_NAME = SauryShare;
+			SKIP_INSTALL = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Debug; };
+		A10000000000000000000087 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = SauryShare/SauryShare.entitlements;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 4;
+			INFOPLIST_FILE = Config/SauryShare-Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.share;
+			PRODUCT_NAME = SauryShare;
+			SKIP_INSTALL = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Release; };
+		A10000000000000000000088 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = SauryWidget/SauryWidget.entitlements;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 4;
+			INFOPLIST_FILE = Config/SauryWidget-Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.widget;
+			PRODUCT_NAME = SauryWidget;
+			SKIP_INSTALL = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Debug; };
+		A10000000000000000000089 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+			APPLICATION_EXTENSION_API_ONLY = YES;
+			CODE_SIGN_ENTITLEMENTS = SauryWidget/SauryWidget.entitlements;
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 4;
+			INFOPLIST_FILE = Config/SauryWidget-Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.widget;
+			PRODUCT_NAME = SauryWidget;
+			SKIP_INSTALL = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = 1;
+		}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000070 /* Build configuration list for PBXNativeTarget "Saury" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000080 /* Debug */, A10000000000000000000081 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000071 /* Build configuration list for PBXNativeTarget "SauryTests" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000082 /* Debug */, A10000000000000000000083 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000072 /* Build configuration list for PBXProject "Saury" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000084 /* Debug */, A10000000000000000000085 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000073 /* Build configuration list for PBXNativeTarget "SauryShare" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000086 /* Debug */, A10000000000000000000087 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000074 /* Build configuration list for PBXNativeTarget "SauryWidget" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000088 /* Debug */, A10000000000000000000089 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
