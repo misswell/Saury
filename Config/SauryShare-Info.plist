@@ -16,6 +16,7 @@
 			<key>NSExtensionActivationRule</key>
 			<dict>
 				<key>NSExtensionActivationSupportsText</key><true/>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key><integer>1</integer>
 				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key><integer>1</integer>
 			</dict>
 		</dict>

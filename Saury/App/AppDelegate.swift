@@ -23,22 +23,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let action: DecisionAction
-        switch response.actionIdentifier {
-        case "qijian.action.cancel": action = .cancelled
-        case "qijian.action.continue": action = .continued
-        case "qijian.action.snooze": action = .snoozed
-        default:
+        // 按钮标识里带着动作本身（方案 §39），所以通知上的按钮和 App 里的
+        // 动作永远是同一套定义，不需要在这里再抄一份对照表。
+        guard let action = ReminderCategory.action(for: response.actionIdentifier) else {
             completionHandler()
             return
         }
 
-        guard let itemIDString = response.notification.request.content.userInfo["renewalItemID"] as? String,
+        guard let itemIDString = response.notification.request.content.userInfo[ReminderCategory.itemIDKey] as? String,
               let itemID = UUID(uuidString: itemIDString) else {
             completionHandler()
             return
         }
-        NotificationActionHandler.store(NotificationActionPayload(renewalItemID: itemID, action: action))
+        NotificationActionHandler.store(NotificationActionPayload(itemID: itemID, action: action))
         completionHandler()
     }
 }

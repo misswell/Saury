@@ -1,158 +1,228 @@
 import Foundation
 import SwiftData
 
-struct RenewalExport: Codable {
+//
+//  本机 JSON 备份。方案 §59/§60 会把它升级成正式的 Backup V2；
+//  这里先把字段跟上新模型，并保证同一份备份重复导入不会产生成倍的历史记录。
+//
+
+struct SauryExport: Codable {
+    static let currentVersion = 2
+
+    let version: Int
     let exportedAt: Date
-    let items: [RenewalExportItem]
-    let decisions: [RenewalExportDecision]
+    let items: [ExportedExpiryItem]
+    let events: [ExportedExpiryEvent]
 }
 
-struct RenewalExportItem: Codable {
+struct ExportedExpiryItem: Codable {
     let id: UUID
     let name: String
-    let amountMinorUnits: Int
-    let currencyCode: String
-    let nextRenewalDate: Date
-    let cycle: String
-    let intervalMonths: Int
+    let brand: String?
     let category: String
-    let status: String
-    let isAutoRenewing: Bool
-    let cancelByDate: Date?
+    let expiryDate: Date
+    let manufactureDate: Date?
+    let purchaseDate: Date?
+    let openedDate: Date?
+    let shelfLifeDays: Int?
+    let afterOpeningDays: Int?
+    let barcode: String?
+    let batchNumber: String?
+    let quantity: Double
+    let unit: String
+    let location: String?
+    let priceMinorUnits: Int?
+    let currencyCode: String?
+    let recurrence: String
+    let recurrenceInterval: Int?
+    let actionDeadline: Date?
+    let sourceURL: String?
+    /// 图片文件不在这份 JSON 里（方案 §34 它本来就存在库里之外），这里只带上文件名。
+    /// 换设备恢复时文件可能不在，活动记录会说明「这张照片不在这台设备上了」。
+    let imageIdentifier: String?
     let reminderOffsets: [Int]
-    let managementURLString: String
+    let state: String
     let notes: String
+    let createdAt: Date
+    let updatedAt: Date
 
-    init(_ item: RenewalItem) {
+    init(_ item: ExpiryItem) {
         id = item.id
         name = item.name
-        amountMinorUnits = item.amountMinorUnits
-        currencyCode = item.currencyCode
-        nextRenewalDate = item.nextRenewalDate
-        cycle = item.cycle.rawValue
-        intervalMonths = item.intervalMonths
+        brand = item.brand
         category = item.category.rawValue
-        status = item.status.rawValue
-        isAutoRenewing = item.isAutoRenewing
-        cancelByDate = item.cancelByDate
+        expiryDate = item.expiryDate
+        manufactureDate = item.manufactureDate
+        purchaseDate = item.purchaseDate
+        openedDate = item.openedDate
+        shelfLifeDays = item.shelfLifeDays
+        afterOpeningDays = item.afterOpeningDays
+        barcode = item.barcode
+        batchNumber = item.batchNumber
+        quantity = item.quantity
+        unit = item.unit
+        location = item.location
+        priceMinorUnits = item.priceMinorUnits
+        currencyCode = item.currencyCode
+        recurrence = item.recurrence.rawValue
+        recurrenceInterval = item.recurrenceInterval
+        actionDeadline = item.actionDeadline
+        sourceURL = item.sourceURL
+        imageIdentifier = item.imageIdentifier
         reminderOffsets = item.reminderOffsets
-        managementURLString = item.managementURLString
+        state = item.state.rawValue
         notes = item.notes
+        createdAt = item.createdAt
+        updatedAt = item.updatedAt
     }
 }
 
-struct RenewalExportDecision: Codable {
-    let renewalItemID: UUID
+struct ExportedExpiryEvent: Codable {
+    let id: UUID
+    let itemID: UUID
     let itemName: String
-    let action: String
-    let amountMinorUnits: Int
-    let currencyCode: String
+    let eventType: String
+    let quantity: Double?
+    let priceMinorUnits: Int?
+    let currencyCode: String?
+    let expiryDate: Date?
     let happenedAt: Date
+    let imageIdentifier: String?
 
-    init(_ decision: DecisionRecord) {
-        renewalItemID = decision.renewalItemID
-        itemName = decision.itemName
-        action = decision.action.rawValue
-        amountMinorUnits = decision.amountMinorUnits
-        currencyCode = decision.currencyCode
-        happenedAt = decision.happenedAt
+    init(_ event: ExpiryEvent) {
+        id = event.id
+        itemID = event.itemID
+        itemName = event.itemName
+        eventType = event.eventType.rawValue
+        quantity = event.quantity
+        priceMinorUnits = event.priceMinorUnits
+        currencyCode = event.currencyCode
+        expiryDate = event.expiryDate
+        happenedAt = event.happenedAt
+        imageIdentifier = event.imageIdentifier
     }
 }
 
 enum DataExportService {
     struct ImportSummary {
         let importedItems: Int
-        let importedDecisions: Int
+        let importedEvents: Int
+        let skippedEvents: Int
 
         var message: String {
-            String(format: "已导入 %d 个订阅和 %d 条历史记录。", importedItems, importedDecisions)
+            if skippedEvents > 0 {
+                return String(format: "已导入 %d 条物品和 %d 条记录，%d 条重复记录已跳过。", importedItems, importedEvents, skippedEvents)
+            }
+            return String(format: "已导入 %d 条物品和 %d 条记录。", importedItems, importedEvents)
         }
     }
 
-    static func makeExport(items: [RenewalItem], decisions: [DecisionRecord]) -> RenewalExport {
-        RenewalExport(exportedAt: Date(), items: items.map(RenewalExportItem.init), decisions: decisions.map(RenewalExportDecision.init))
-    }
-
-    static func jsonText(items: [RenewalItem], decisions: [DecisionRecord]) -> String {
+    static func jsonText(items: [ExpiryItem], events: [ExpiryEvent]) -> String {
+        let export = SauryExport(version: SauryExport.currentVersion, exportedAt: Date(), items: items.map(ExportedExpiryItem.init), events: events.map(ExportedExpiryEvent.init))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(makeExport(items: items, decisions: decisions)),
-              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        guard let data = try? encoder.encode(export), let text = String(data: data, encoding: .utf8) else { return "{}" }
         return text
     }
 
-    /// Imports a JSON backup into the local SwiftData store. Existing subscriptions
-    /// are updated by UUID so a backup can safely be restored more than once.
+    /// 按 id 幂等导入：同一份备份导入两次不会多出物品，也不会重复历史。
     @MainActor
     static func importJSON(_ data: Data, into modelContext: ModelContext) throws -> ImportSummary {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let export = try decoder.decode(RenewalExport.self, from: data)
+        let export = try decoder.decode(SauryExport.self, from: data)
 
-        let existingItems = try modelContext.fetch(FetchDescriptor<RenewalItem>())
-        var itemsByID = Dictionary(uniqueKeysWithValues: existingItems.map { ($0.id, $0) })
+        var itemsByID = Dictionary(uniqueKeysWithValues: try modelContext.fetch(FetchDescriptor<ExpiryItem>()).map { ($0.id, $0) })
         var importedItems = 0
-
         for exported in export.items {
-            let cycle = RenewalCycle(rawValue: exported.cycle) ?? .monthly
-            let category = RenewalCategory(rawValue: exported.category) ?? .other
-            let status = RenewalStatus(rawValue: exported.status) ?? .active
-
+            let category = ExpiryCategory(rawValue: exported.category) ?? .other
+            let recurrence = ExpiryRecurrence(rawValue: exported.recurrence) ?? .none
+            let state = ExpiryState(rawValue: exported.state) ?? .active
             if let item = itemsByID[exported.id] {
                 item.name = exported.name
-                item.amountMinorUnits = max(exported.amountMinorUnits, 0)
-                item.currencyCode = exported.currencyCode.isEmpty ? "CNY" : exported.currencyCode
-                item.nextRenewalDate = exported.nextRenewalDate
-                item.anchorDay = Calendar.current.component(.day, from: exported.nextRenewalDate)
-                item.cycle = cycle
-                item.intervalMonths = max(exported.intervalMonths, 1)
-                item.category = category
-                item.status = status
-                item.isAutoRenewing = exported.isAutoRenewing
-                item.cancelByDate = exported.cancelByDate
-                item.reminderOffsets = exported.reminderOffsets.isEmpty ? cycle.defaultReminderOffsets : exported.reminderOffsets
-                item.managementURLString = exported.managementURLString
+                item.brand = exported.brand
+                item.categoryRawValue = category.rawValue
+                item.expiryDate = exported.expiryDate
+                item.manufactureDate = exported.manufactureDate
+                item.purchaseDate = exported.purchaseDate
+                item.openedDate = exported.openedDate
+                item.shelfLifeDays = exported.shelfLifeDays
+                item.afterOpeningDays = exported.afterOpeningDays
+                item.barcode = exported.barcode
+                item.batchNumber = exported.batchNumber
+                item.quantity = exported.quantity
+                item.unit = exported.unit
+                item.location = exported.location
+                item.priceMinorUnits = exported.priceMinorUnits
+                item.currencyCode = exported.currencyCode
+                item.recurrenceRawValue = recurrence.rawValue
+                item.recurrenceInterval = exported.recurrenceInterval
+                item.actionDeadline = exported.actionDeadline
+                item.sourceURL = exported.sourceURL
+                // 老备份里没有这一列：按「没带图」处理，不能因此把本机已有的图抹掉。
+                if let identifier = exported.imageIdentifier { item.imageIdentifier = identifier }
+                item.reminderOffsets = exported.reminderOffsets
+                item.stateRawValue = state.rawValue
                 item.notes = exported.notes
                 item.markUpdated()
             } else {
-                let item = RenewalItem(
+                let item = ExpiryItem(
                     id: exported.id,
                     name: exported.name,
-                    amountMinorUnits: exported.amountMinorUnits,
-                    currencyCode: exported.currencyCode,
-                    nextRenewalDate: exported.nextRenewalDate,
-                    cycle: cycle,
-                    intervalMonths: exported.intervalMonths,
+                    brand: exported.brand,
                     category: category,
-                    status: status,
-                    isAutoRenewing: exported.isAutoRenewing,
-                    cancelByDate: exported.cancelByDate,
+                    expiryDate: exported.expiryDate,
+                    manufactureDate: exported.manufactureDate,
+                    purchaseDate: exported.purchaseDate,
+                    openedDate: exported.openedDate,
+                    shelfLifeDays: exported.shelfLifeDays,
+                    afterOpeningDays: exported.afterOpeningDays,
+                    barcode: exported.barcode,
+                    batchNumber: exported.batchNumber,
+                    quantity: exported.quantity,
+                    unit: exported.unit,
+                    location: exported.location,
+                    priceMinorUnits: exported.priceMinorUnits,
+                    currencyCode: exported.currencyCode,
+                    recurrence: recurrence,
+                    recurrenceInterval: exported.recurrenceInterval,
+                    actionDeadline: exported.actionDeadline,
+                    sourceURL: exported.sourceURL,
+                    imageIdentifier: exported.imageIdentifier,
                     reminderOffsets: exported.reminderOffsets,
-                    managementURLString: exported.managementURLString,
-                    notes: exported.notes
+                    state: state,
+                    notes: exported.notes,
+                    createdAt: exported.createdAt
                 )
+                item.updatedAt = exported.updatedAt
                 modelContext.insert(item)
                 itemsByID[exported.id] = item
             }
             importedItems += 1
         }
 
-        var importedDecisions = 0
-        for exported in export.decisions {
-            let action = DecisionAction(rawValue: exported.action) ?? .snoozed
-            modelContext.insert(DecisionRecord(
-                renewalItemID: exported.renewalItemID,
+        let existingEventIDs = Set(try modelContext.fetch(FetchDescriptor<ExpiryEvent>()).map(\.id))
+        var importedEvents = 0
+        var skippedEvents = 0
+        for exported in export.events {
+            guard !existingEventIDs.contains(exported.id) else { skippedEvents += 1; continue }
+            modelContext.insert(ExpiryEvent(
+                id: exported.id,
+                itemID: exported.itemID,
                 itemName: exported.itemName,
-                action: action,
-                amountMinorUnits: max(exported.amountMinorUnits, 0),
+                eventType: ExpiryEventType(rawValue: exported.eventType) ?? .edited,
+                quantity: exported.quantity,
+                priceMinorUnits: exported.priceMinorUnits,
                 currencyCode: exported.currencyCode,
-                happenedAt: exported.happenedAt
+                expiryDate: exported.expiryDate,
+                happenedAt: exported.happenedAt,
+                imageIdentifier: exported.imageIdentifier
             ))
-            importedDecisions += 1
+            importedEvents += 1
         }
 
         try modelContext.save()
-        return ImportSummary(importedItems: importedItems, importedDecisions: importedDecisions)
+        return ImportSummary(importedItems: importedItems, importedEvents: importedEvents, skippedEvents: skippedEvents)
     }
 }

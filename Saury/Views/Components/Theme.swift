@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// 内容层配色。品牌强调色只有一个（`accent`），其余是纸、墨、灰阶。
+/// 状态色不在这里，见 `ExpiryUrgency`。
 enum QJTheme {
     static let canvas = Color(light: Color(red: 0.93, green: 0.92, blue: 0.88), dark: Color(red: 0.09, green: 0.10, blue: 0.10))
     static let surface = Color(light: Color(red: 0.98, green: 0.97, blue: 0.94), dark: Color(red: 0.13, green: 0.14, blue: 0.14))
@@ -11,9 +13,15 @@ enum QJTheme {
     static let accentSoft = Color(light: Color(red: 0.98, green: 0.86, blue: 0.83), dark: Color(red: 0.27, green: 0.16, blue: 0.14))
     static let calm = Color(light: Color(red: 0.19, green: 0.36, blue: 0.29), dark: Color(red: 0.48, green: 0.73, blue: 0.61))
     static let calmSoft = Color(light: Color(red: 0.86, green: 0.92, blue: 0.88), dark: Color(red: 0.13, green: 0.24, blue: 0.19))
-    static let warn = Color(light: Color(red: 0.53, green: 0.35, blue: 0.07), dark: Color(red: 0.88, green: 0.70, blue: 0.36))
+}
 
-    static let pageGradient = LinearGradient(colors: [accent.opacity(0.10), calm.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing)
+/// 内容层节奏。导航、工具栏、Tab 栏、搜索、菜单、弹层都交给系统，
+/// 页面只负责这一套间距。
+enum QJMetric {
+    static let screen: CGFloat = 16
+    static let section: CGFloat = 26
+    static let card: CGFloat = 16
+    static let row: CGFloat = 12
 }
 
 extension Color {
@@ -25,10 +33,10 @@ extension Color {
 }
 
 extension View {
-    func qjCard(fill: Color = QJTheme.elevated, radius: CGFloat = 22) -> some View {
+    /// 内容卡片：只有分组背景，没有描边和阴影。层级靠间距和字号，不靠描边。
+    func qjCard(fill: Color = QJTheme.elevated, radius: CGFloat = 20) -> some View {
         self
             .background(fill)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(QJTheme.line, lineWidth: 0.7))
     }
 }

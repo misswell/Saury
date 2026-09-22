@@ -18,35 +18,8 @@ enum NotificationActionHandler {
     }
 
     static func apply(_ payload: NotificationActionPayload, in context: ModelContext) async {
-        let items = (try? context.fetch(FetchDescriptor<RenewalItem>())) ?? []
-        guard let item = items.first(where: { $0.id == payload.renewalItemID }) else { return }
-
-        switch payload.action {
-        case .cancelled:
-            item.status = .cancelled
-            item.isAutoRenewing = false
-        case .continued:
-            if let next = RenewalDateCalculator.nextDate(for: item) {
-                item.nextRenewalDate = next
-                item.status = .active
-                item.isAutoRenewing = true
-            }
-        case .paused:
-            item.status = .paused
-        case .snoozed:
-            await ReminderScheduler.shared.scheduleSnooze(for: item)
-        }
-
-        context.insert(DecisionRecord(
-            renewalItemID: item.id,
-            itemName: item.name,
-            action: payload.action,
-            amountMinorUnits: item.amountMinorUnits,
-            currencyCode: item.currencyCode
-        ))
-        item.markUpdated()
-        try? context.save()
-        WidgetSnapshotStore.update(items: items)
-        await ReminderScheduler.shared.rescheduleAll(items: items)
+        let items = (try? context.fetch(FetchDescriptor<ExpiryItem>())) ?? []
+        guard let item = items.first(where: { $0.id == payload.itemID }) else { return }
+        await ExpiryActionCenter.shared.perform(payload.action, on: item, in: context)
     }
 }

@@ -9,7 +9,7 @@ struct SauryApp: App {
 
     init() {
         do {
-            container = try ModelContainer(for: RenewalItem.self, DecisionRecord.self)
+            container = try PersistenceController.makeContainer()
         } catch {
             fatalError("无法创建本地数据容器：\(error.localizedDescription)")
         }

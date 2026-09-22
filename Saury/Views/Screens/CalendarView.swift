@@ -1,20 +1,20 @@
 import SwiftUI
 
 struct CalendarView: View {
-    let items: [RenewalItem]
-    let onOpenItem: (RenewalItem) -> Void
-    let onSettings: () -> Void
+    let items: [ExpiryItem]
+    let onOpenItem: (ExpiryItem) -> Void
 
     @State private var visibleMonth = Date()
     @State private var selectedDay = Date()
 
-    private var calendar: Calendar { RenewalDateCalculator.defaultCalendar }
+    private var calendar: Calendar { ExpiryEngine.calendar }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                QJHeader(eyebrow: "续费日历", title: monthTitle, subtitle: "把决定安排在扣款之前。", onSettings: onSettings)
-                    .padding(.top, 10)
+                Text(Date().qjWeekdayDateText)
+                    .font(.subheadline)
+                    .foregroundStyle(QJTheme.subtle)
 
                 HStack {
                     Button { changeMonth(by: -1) } label: { Image(systemName: "chevron.left") }
@@ -24,10 +24,10 @@ struct CalendarView: View {
                     Button { changeMonth(by: 1) } label: { Image(systemName: "chevron.right") }
                 }
                 .foregroundStyle(QJTheme.ink)
-                .padding(.top, 22)
+                .padding(.top, 18)
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 7), spacing: 5) {
-                    ForEach(calendar.shortWeekdaySymbolsStartingMonday, id: \.self) { weekday in
+                    ForEach(Array(calendar.shortWeekdaySymbolsStartingMonday.enumerated()), id: \.offset) { _, weekday in
                         Text(weekday)
                             .font(.caption2)
                             .foregroundStyle(QJTheme.subtle)
@@ -42,14 +42,14 @@ struct CalendarView: View {
                     }
                 }
                 .padding(14)
-                .qjCard(radius: 22)
+                .qjCard()
                 .padding(.top, 11)
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("本月有 \(monthItems.count) 次续费")
+                        Text("本月有 \(monthItems.count) 件到期")
                             .font(.subheadline.weight(.medium))
-                        Text("预计支出 \(monthSpend.qjCurrencyText)")
+                        Text("到期金额合计 \(monthSpend.text)")
                             .font(.caption)
                             .foregroundStyle(QJTheme.calm)
                     }
@@ -64,40 +64,40 @@ struct CalendarView: View {
                 .padding(.top, 15)
 
                 HStack(alignment: .firstTextBaseline) {
-                    Text(selectedDay.qjDateText).font(.headline.weight(.medium))
+                    Text(selectedDay.qjDateText).font(.headline)
                     Spacer()
                     Text("最近")
                         .font(.caption)
                         .foregroundStyle(QJTheme.subtle)
                 }
-                .padding(.top, 25)
-                .padding(.horizontal, 2)
+                .padding(.top, QJMetric.section)
 
-                let selectedItems = items.filter { calendar.isDate($0.nextRenewalDate, inSameDayAs: selectedDay) }
+                let selectedItems = items.filter { calendar.isDate($0.effectiveExpiryDate, inSameDayAs: selectedDay) }
                 if selectedItems.isEmpty {
-                    Text("这一天没有安排续费。")
+                    Text("这一天没有到期的东西。")
                         .font(.subheadline)
                         .foregroundStyle(QJTheme.subtle)
-                        .padding(18)
+                        .padding(QJMetric.card)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .qjCard(fill: QJTheme.elevated.opacity(0.72), radius: 20)
+                        .qjCard()
                         .padding(.top, 10)
                 } else {
                     VStack(spacing: 0) {
                         ForEach(selectedItems, id: \.id) { item in
-                            Button { onOpenItem(item) } label: { RenewalListRow(item: item) }
+                            Button { onOpenItem(item) } label: { ExpiryItemRow(item: item) }
                                 .buttonStyle(.plain)
                             if item.id != selectedItems.last?.id { Divider().overlay(QJTheme.line) }
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .qjCard(radius: 20)
+                    .padding(.horizontal, QJMetric.card)
+                    .qjCard()
                     .padding(.top, 10)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 105)
+            .padding(.horizontal, QJMetric.screen)
+            .padding(.bottom, 30)
         }
+        .background(QJTheme.canvas)
     }
 
     private var monthTitle: String {
@@ -118,18 +118,25 @@ struct CalendarView: View {
         return days
     }
 
-    private var monthItems: [RenewalItem] {
+    private var monthItems: [ExpiryItem] {
         items.filter {
-            calendar.component(.year, from: $0.nextRenewalDate) == calendar.component(.year, from: visibleMonth) &&
-            calendar.component(.month, from: $0.nextRenewalDate) == calendar.component(.month, from: visibleMonth)
+            calendar.component(.year, from: $0.effectiveExpiryDate) == calendar.component(.year, from: visibleMonth) &&
+            calendar.component(.month, from: $0.effectiveExpiryDate) == calendar.component(.month, from: visibleMonth)
         }
     }
 
-    private var monthSpend: Int { monthItems.reduce(0) { $0 + $1.amountMinorUnits } }
+    private var monthSpend: QJSpendSummary {
+        var summary = QJSpendSummary()
+        for item in monthItems {
+            guard let price = item.priceMinorUnits else { continue }
+            summary.add(price, currencyCode: item.currencyCode ?? QJPreferences.defaultCurrencyCode)
+        }
+        return summary
+    }
 
     @ViewBuilder
     private func dayCell(_ day: Date) -> some View {
-        let hasItem = items.contains { calendar.isDate($0.nextRenewalDate, inSameDayAs: day) }
+        let hasItem = items.contains { calendar.isDate($0.effectiveExpiryDate, inSameDayAs: day) }
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
         let isToday = calendar.isDateInToday(day)
         Button { selectedDay = day } label: {
@@ -147,7 +154,7 @@ struct CalendarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(day.qjDateText)\(hasItem ? "，有续费" : "")")
+        .accessibilityLabel("\(day.qjDateText)\(hasItem ? "，有物品到期" : "")")
     }
 
     private func changeMonth(by value: Int) {

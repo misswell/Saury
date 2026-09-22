@@ -15,43 +15,53 @@ enum BillingMode: String, CaseIterable, Identifiable {
 }
 
 struct BillingView: View {
-    let items: [RenewalItem]
-    let onOpenItem: (RenewalItem) -> Void
-    let onSettings: () -> Void
+    let items: [ExpiryItem]
+    let onOpenItem: (ExpiryItem) -> Void
+    let onShowHistory: () -> Void
 
     @State private var mode: BillingMode = .expense
     @State private var selectedMonth = Date()
 
-    private var calendar: Calendar { RenewalDateCalculator.defaultCalendar }
+    private var calendar: Calendar { ExpiryEngine.calendar }
 
-    private var monthItems: [RenewalItem] {
+    private var monthItems: [ExpiryItem] {
         items.filter {
-            calendar.component(.year, from: $0.nextRenewalDate) == calendar.component(.year, from: selectedMonth) &&
-            calendar.component(.month, from: $0.nextRenewalDate) == calendar.component(.month, from: selectedMonth)
+            calendar.component(.year, from: $0.effectiveExpiryDate) == calendar.component(.year, from: selectedMonth) &&
+            calendar.component(.month, from: $0.effectiveExpiryDate) == calendar.component(.month, from: selectedMonth)
         }
-        .sorted { $0.nextRenewalDate < $1.nextRenewalDate }
+        .sorted { $0.effectiveExpiryDate < $1.effectiveExpiryDate }
     }
 
-    private var monthSpend: Int { monthItems.reduce(0) { $0 + $1.amountMinorUnits } }
+    private var monthSpend: QJSpendSummary {
+        var summary = QJSpendSummary()
+        for item in monthItems {
+            guard let price = item.priceMinorUnits else { continue }
+            summary.add(price, currencyCode: item.currencyCode ?? QJPreferences.defaultCurrencyCode)
+        }
+        return summary
+    }
 
-    private var monthlyEquivalentSpend: Int {
-        items.reduce(0) { $0 + monthlyEquivalent(for: $1) }
+    private var monthlyEquivalentSpend: QJSpendSummary {
+        var summary = QJSpendSummary()
+        for item in items { summary.addMonthlyEquivalent(of: item) }
+        return summary
     }
 
     private var categoryBreakdown: [CategorySpend] {
-        let grouped = Dictionary(grouping: items, by: { $0.category })
-        return grouped.map { category, categoryItems in
-            CategorySpend(category: category, amountMinorUnits: categoryItems.reduce(0) { $0 + monthlyEquivalent(for: $1) })
+        Dictionary(grouping: items, by: { $0.category }).map { category, categoryItems in
+            var summary = QJSpendSummary()
+            for item in categoryItems { summary.addMonthlyEquivalent(of: item) }
+            return CategorySpend(category: category, summary: summary)
         }
-        .sorted { $0.amountMinorUnits > $1.amountMinorUnits }
+        .sorted {
+            $0.summary.amount(in: monthlyEquivalentSpend.primaryCurrency)
+                > $1.summary.amount(in: monthlyEquivalentSpend.primaryCurrency)
+        }
     }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                QJHeader(eyebrow: "支出洞察", title: "订阅花在哪里，\n一眼看清。", subtitle: "只统计你记录在期见里的订阅。", onSettings: onSettings)
-                    .padding(.top, 10)
-
                 Picker("账单模式", selection: $mode) {
                     ForEach(BillingMode.allCases) { mode in
                         Text(mode.title).tag(mode)
@@ -59,7 +69,6 @@ struct BillingView: View {
                 }
                 .pickerStyle(.segmented)
                 .tint(QJTheme.accent)
-                .padding(.top, 22)
 
                 switch mode {
                 case .expense:
@@ -67,10 +76,37 @@ struct BillingView: View {
                 case .amortized:
                     amortizedContent
                 }
+
+                historyLink
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 105)
+            .padding(.horizontal, QJMetric.screen)
+            .padding(.bottom, 30)
         }
+        .background(QJTheme.canvas)
+    }
+
+    private var historyLink: some View {
+        Button(action: onShowHistory) {
+            HStack(spacing: 11) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(QJTheme.accent)
+                Text("活动记录")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(QJTheme.ink)
+                Spacer()
+                Text("每一次处理和续期")
+                    .font(.caption)
+                    .foregroundStyle(QJTheme.subtle)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(QJTheme.subtle)
+            }
+            .padding(QJMetric.card)
+            .qjCard()
+        }
+        .buttonStyle(.plain)
+        .padding(.top, QJMetric.section)
     }
 
     private var expenseContent: some View {
@@ -78,8 +114,8 @@ struct BillingView: View {
             monthNavigator
 
             HStack(spacing: 10) {
-                BillingStat(title: "本月待支付", value: monthSpend.qjCurrencyText, symbol: "creditcard.fill", tint: QJTheme.accent)
-                BillingStat(title: "订阅数量", value: "(monthItems.count)", symbol: "square.stack.3d.up.fill", tint: QJTheme.calm)
+                BillingStat(title: "本月待支付", value: monthSpend.text, symbol: "creditcard.fill", tint: QJTheme.accent)
+                BillingStat(title: "到期数量", value: "\(monthItems.count)", symbol: "square.stack.3d.up.fill", tint: QJTheme.calm)
             }
             .padding(.top, 17)
 
@@ -90,24 +126,23 @@ struct BillingView: View {
                         .foregroundStyle(QJTheme.accent)
                     Text("暂无扣费记录")
                         .font(.title3.weight(.medium))
-                    Text("当订阅的下次到期日进入这个月，预估支出会显示在这里。")
+                    Text("当物品的到期日进入这个月，预估支出会显示在这里。")
                         .font(.subheadline)
                         .foregroundStyle(QJTheme.subtle)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .qjCard(fill: QJTheme.elevated.opacity(0.72), radius: 22)
+                .qjCard()
                 .padding(.top, 18)
             } else {
                 Text("本月项目")
-                    .font(.headline.weight(.medium))
-                    .padding(.top, 27)
-                    .padding(.horizontal, 2)
+                    .font(.headline)
+                    .padding(.top, QJMetric.section)
 
                 VStack(spacing: 0) {
                     ForEach(monthItems) { item in
                         Button { onOpenItem(item) } label: {
-                            RenewalListRow(item: item)
+                            ExpiryItemRow(item: item)
                         }
                         .buttonStyle(.plain)
                         if item.id != monthItems.last?.id {
@@ -115,8 +150,8 @@ struct BillingView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .qjCard(radius: 20)
+                .padding(.horizontal, QJMetric.card)
+                .qjCard()
                 .padding(.top, 10)
             }
         }
@@ -129,7 +164,7 @@ struct BillingView: View {
                     Text("每月均摊")
                         .font(.caption)
                         .foregroundStyle(QJTheme.subtle)
-                    Text(monthlyEquivalentSpend.qjCurrencyText)
+                    Text(monthlyEquivalentSpend.text)
                         .font(.system(size: 38, weight: .medium, design: .rounded))
                         .foregroundStyle(QJTheme.ink)
                 }
@@ -139,21 +174,20 @@ struct BillingView: View {
                     .foregroundStyle(QJTheme.calm)
             }
             .padding(19)
-            .qjCard(fill: QJTheme.calmSoft.opacity(0.72), radius: 22)
+            .qjCard(fill: QJTheme.calmSoft)
             .padding(.top, 19)
 
             Text("按分类")
-                .font(.headline.weight(.medium))
-                .padding(.top, 27)
-                .padding(.horizontal, 2)
+                .font(.headline)
+                .padding(.top, QJMetric.section)
 
             if categoryBreakdown.isEmpty {
-                Text("添加订阅后，这里会显示每月均摊支出。")
+                Text("记录物品和金额后，这里会显示每月均摊支出。")
                     .font(.subheadline)
                     .foregroundStyle(QJTheme.subtle)
-                    .padding(18)
+                    .padding(QJMetric.card)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .qjCard(fill: QJTheme.elevated.opacity(0.72), radius: 20)
+                    .qjCard()
                     .padding(.top, 10)
             } else {
                 VStack(spacing: 15) {
@@ -161,16 +195,15 @@ struct BillingView: View {
                         CategorySpendRow(breakdown: breakdown, total: monthlyEquivalentSpend)
                     }
                 }
-                .padding(17)
-                .qjCard(radius: 21)
+                .padding(QJMetric.card)
+                .qjCard()
                 .padding(.top, 10)
             }
 
-            Text("均摊会把年付和自定义周期折算为每月金额，方便判断固定支出。")
+            Text("均摊会把年付、季付和自定义周期折算为每月金额，方便判断固定支出。")
                 .font(.caption)
                 .foregroundStyle(QJTheme.subtle)
                 .padding(.top, 13)
-                .padding(.horizontal, 2)
         }
     }
 
@@ -199,22 +232,11 @@ struct BillingView: View {
             selectedMonth = month
         }
     }
-
-    private func monthlyEquivalent(for item: RenewalItem) -> Int {
-        switch item.cycle {
-        case .yearly:
-            return item.amountMinorUnits / 12
-        case .customMonths:
-            return item.amountMinorUnits / max(item.intervalMonths, 1)
-        default:
-            return item.amountMinorUnits
-        }
-    }
 }
 
 private struct CategorySpend: Identifiable {
-    let category: RenewalCategory
-    let amountMinorUnits: Int
+    let category: ExpiryCategory
+    let summary: QJSpendSummary
     var id: String { category.rawValue }
 }
 
@@ -237,17 +259,20 @@ private struct BillingStat: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .qjCard(fill: QJTheme.elevated, radius: 18)
+        .qjCard()
     }
 }
 
 private struct CategorySpendRow: View {
     let breakdown: CategorySpend
-    let total: Int
+    let total: QJSpendSummary
 
+    /// 条形长度只在同一币种内比较，取总额最大的币种作为基准。
     private var fraction: Double {
-        guard total > 0 else { return 0 }
-        return min(max(Double(breakdown.amountMinorUnits) / Double(total), 0), 1)
+        let currency = total.primaryCurrency
+        let whole = total.amount(in: currency)
+        guard whole > 0 else { return 0 }
+        return min(max(Double(breakdown.summary.amount(in: currency)) / Double(whole), 0), 1)
     }
 
     var body: some View {
@@ -257,7 +282,7 @@ private struct CategorySpendRow: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(QJTheme.ink)
                 Spacer()
-                Text(breakdown.amountMinorUnits.qjCurrencyText)
+                Text(breakdown.summary.text)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(QJTheme.subtle)
             }

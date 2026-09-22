@@ -6,7 +6,7 @@ struct AddRenewalIntent: AppIntent {
     static var description = IntentDescription("在期见中创建一个新的订阅提醒。")
     static var openAppWhenRun: Bool = true
 
-    @Parameter(title: "订阅名称")
+    @Parameter(title: "物品名称")
     var name: String
 
     @Parameter(title: "多少天后到期", default: 30)
@@ -19,15 +19,15 @@ struct AddRenewalIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let safeDays = min(max(days, 0), 3650)
-        ExternalInputStore.store(ExternalRenewalDraft(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新订阅" : name,
-            amountMinorUnits: nil,
-            currencyCode: "CNY",
-            renewalDate: Calendar.current.date(byAdding: .day, value: safeDays, to: Date()),
-            cycle: .monthly,
-            source: "快捷指令"
-        ))
-        return .result(dialog: "已准备好添加「\(name)」，请确认金额和提醒时间。")
+        ExternalInputStore.store(.fields(ExternalItemDraft(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新物品" : name,
+            priceMinorUnits: nil,
+            currencyCode: nil,
+            expiryDate: Calendar.current.date(byAdding: .day, value: safeDays, to: Date()),
+            recurrence: nil,
+            category: nil
+        )), source: "快捷指令")
+        return .result(dialog: "已准备好添加「\(name)」，请确认日期和提醒时间。")
     }
 }
 
