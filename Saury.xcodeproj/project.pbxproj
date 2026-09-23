@@ -190,7 +190,7 @@
 		"ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME" = AccentColor;
 		"CODE_SIGN_ENTITLEMENTS" = "Saury/App/Saury.entitlements";
 		"CODE_SIGN_STYLE" = Automatic;
-		"CURRENT_PROJECT_VERSION" = 4;
+		"CURRENT_PROJECT_VERSION" = 5;
 		"ENABLE_PREVIEWS" = YES;
 		"GENERATE_INFOPLIST_FILE" = YES;
 		"INFOPLIST_KEY_CFBundleDisplayName" = "\U671f\U89c1";
@@ -217,7 +217,7 @@
 		"ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME" = AccentColor;
 		"CODE_SIGN_ENTITLEMENTS" = "Saury/App/Saury.entitlements";
 		"CODE_SIGN_STYLE" = Automatic;
-		"CURRENT_PROJECT_VERSION" = 4;
+		"CURRENT_PROJECT_VERSION" = 5;
 		"GENERATE_INFOPLIST_FILE" = YES;
 		"INFOPLIST_KEY_CFBundleDisplayName" = "\U671f\U89c1";
 		"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.productivity";
@@ -293,7 +293,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = SauryShare/SauryShare.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			INFOPLIST_FILE = Config/SauryShare-Info.plist;
 			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.share;
@@ -306,7 +306,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = SauryShare/SauryShare.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			INFOPLIST_FILE = Config/SauryShare-Info.plist;
 			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.share;
@@ -319,7 +319,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = SauryWidget/SauryWidget.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			INFOPLIST_FILE = Config/SauryWidget-Info.plist;
 			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.widget;
@@ -332,7 +332,7 @@
 			APPLICATION_EXTENSION_API_ONLY = YES;
 			CODE_SIGN_ENTITLEMENTS = SauryWidget/SauryWidget.entitlements;
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			INFOPLIST_FILE = Config/SauryWidget-Info.plist;
 			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 			PRODUCT_BUNDLE_IDENTIFIER = com.guofeng.saury.widget;

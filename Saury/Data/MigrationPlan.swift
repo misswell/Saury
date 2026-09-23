@@ -110,6 +110,42 @@ struct LegacyRenewalSnapshot {
     let createdAt: Date
     let updatedAt: Date
 
+    init(
+        id: UUID,
+        name: String,
+        amountMinorUnits: Int,
+        currencyCode: String,
+        nextRenewalDate: Date,
+        cycleRawValue: String,
+        intervalMonths: Int,
+        anchorDay: Int,
+        statusRawValue: String,
+        isAutoRenewing: Bool,
+        cancelByDate: Date?,
+        reminderOffsets: [Int],
+        managementURLString: String,
+        notes: String,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.name = name
+        self.amountMinorUnits = amountMinorUnits
+        self.currencyCode = currencyCode
+        self.nextRenewalDate = nextRenewalDate
+        self.cycleRawValue = cycleRawValue
+        self.intervalMonths = intervalMonths
+        self.anchorDay = anchorDay
+        self.statusRawValue = statusRawValue
+        self.isAutoRenewing = isAutoRenewing
+        self.cancelByDate = cancelByDate
+        self.reminderOffsets = reminderOffsets
+        self.managementURLString = managementURLString
+        self.notes = notes
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
     init(_ item: RenewalItem) {
         id = item.id
         name = item.name
@@ -138,6 +174,24 @@ struct LegacyDecisionSnapshot {
     let amountMinorUnits: Int
     let currencyCode: String
     let happenedAt: Date
+
+    init(
+        id: UUID,
+        renewalItemID: UUID,
+        itemName: String,
+        actionRawValue: String,
+        amountMinorUnits: Int,
+        currencyCode: String,
+        happenedAt: Date
+    ) {
+        self.id = id
+        self.renewalItemID = renewalItemID
+        self.itemName = itemName
+        self.actionRawValue = actionRawValue
+        self.amountMinorUnits = amountMinorUnits
+        self.currencyCode = currencyCode
+        self.happenedAt = happenedAt
+    }
 
     init(_ record: DecisionRecord) {
         id = record.id

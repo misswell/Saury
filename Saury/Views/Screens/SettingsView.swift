@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ExpiryItem.expiryDate) private var items: [ExpiryItem]
     @Query(sort: \ExpiryEvent.happenedAt, order: .reverse) private var events: [ExpiryEvent]
+    @Query(sort: \ProductTemplate.createdAt) private var templates: [ProductTemplate]
     @AppStorage(QJPreferences.defaultReminderDaysKey) private var defaultReminderDays = 3
     @AppStorage(QJPreferences.reminderHourKey) private var reminderHour = 9
     @AppStorage(QJPreferences.defaultCurrencyCodeKey) private var defaultCurrencyCode = "CNY"
@@ -76,11 +77,11 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    ShareLink(item: DataExportService.jsonText(items: items, events: events), subject: Text("期见数据备份")) {
+                    ShareLink(item: DataExportService.jsonText(items: items, events: events, templates: templates), subject: Text("期见数据备份")) {
                         SettingsRow(symbol: "square.and.arrow.up", title: "导出数据", detail: "生成一份本机 JSON 备份")
                     }
                     Button { showingImporter = true } label: {
-                        SettingsRow(symbol: "square.and.arrow.down", title: "导入数据", detail: "从 JSON 备份恢复物品和历史")
+                        SettingsRow(symbol: "square.and.arrow.down", title: "导入数据", detail: "从 JSON 备份恢复物品、历史、商品模板和位置")
                     }
                     Button { showingPaywall = true } label: {
                         SettingsRow(symbol: "sparkles", title: "期见终身版", detail: "一次购买，解锁无限物品和扫描识别")
