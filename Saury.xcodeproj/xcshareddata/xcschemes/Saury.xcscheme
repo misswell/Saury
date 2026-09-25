@@ -9,7 +9,7 @@
    </BuildAction>
    <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
       <Testables>
-         <TestableReference skipped="NO" parallelizable="YES">
+         <TestableReference skipped="NO" parallelizable="NO">
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A10000000000000000000011" BuildableName="SauryTests.xctest" BlueprintName="SauryTests" ReferencedContainer="container:Saury.xcodeproj"/>
          </TestableReference>
       </Testables>
