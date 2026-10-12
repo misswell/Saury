@@ -112,7 +112,7 @@ extension ExpiryEvent {
             eventType: eventType,
             quantity: item.quantity,
             priceMinorUnits: item.priceMinorUnits,
-            currencyCode: item.currencyCode ?? QJPreferences.defaultCurrencyCode,
+            currencyCode: item.currencyCode ?? "CNY",
             expiryDate: item.expiryDate,
             happenedAt: happenedAt,
             imageIdentifier: imageIdentifier

@@ -17,7 +17,7 @@ private struct QJWidgetEntry: TimelineEntry {
 
 private struct QJWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> QJWidgetEntry {
-        QJWidgetEntry(date: Date(), snapshot: WidgetSnapshot(name: "纯牛奶 1L", expiryDate: Date().addingTimeInterval(5 * 86400), amountText: "¥12.80", days: 5, countdownText: "还有 5 天"))
+        QJWidgetEntry(date: Date(), snapshot: WidgetSnapshot(name: "ChatGPT", expiryDate: Date().addingTimeInterval(3 * 86400), amountText: "¥134.14", days: 3, countdownText: "还有 3 天扣费"))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (QJWidgetEntry) -> Void) {
@@ -34,7 +34,7 @@ private struct QJWidgetProvider: TimelineProvider {
         guard let defaults = UserDefaults(suiteName: "group.com.guofeng.saury"),
               let data = defaults.data(forKey: "qijian.widgetSnapshot"),
               let snapshot = try? JSONDecoder().decode(WidgetSnapshot.self, from: data) else {
-            return WidgetSnapshot(name: "还没有记录", expiryDate: Date(), amountText: nil, days: 0, countdownText: "添加第一件物品")
+            return WidgetSnapshot(name: "还没有订阅", expiryDate: Date(), amountText: nil, days: 0, countdownText: "添加第一笔订阅")
         }
         return snapshot
     }
@@ -47,8 +47,8 @@ struct QJWidget: Widget {
         StaticConfiguration(kind: kind, provider: QJWidgetProvider()) { entry in
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Image(systemName: "bell.and.waves.left.and.right.fill")
-                        .foregroundStyle(Color(red: 0.85, green: 0.29, blue: 0.23))
+                    Image(systemName: "creditcard.fill")
+                        .foregroundStyle(Color(red: 0.04, green: 0.52, blue: 1.0))
                     Text("期见").font(.caption.weight(.medium))
                     Spacer()
                     if let amountText = entry.snapshot.amountText {
@@ -64,8 +64,8 @@ struct QJWidget: Widget {
             .padding(16)
             .containerBackground(for: .widget) { Color(red: 0.98, green: 0.97, blue: 0.94) }
         }
-        .configurationDisplayName("下一件要处理的事")
-        .description("在到期前看见最需要决定的物品。")
+        .configurationDisplayName("下一次扣费")
+        .description("在扣费之前看见下一笔订阅。")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }

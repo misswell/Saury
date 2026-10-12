@@ -23,19 +23,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        // 按钮标识里带着动作本身（方案 §39），所以通知上的按钮和 App 里的
-        // 动作永远是同一套定义，不需要在这里再抄一份对照表。
-        guard let action = ReminderCategory.action(for: response.actionIdentifier) else {
-            completionHandler()
-            return
-        }
-
-        guard let itemIDString = response.notification.request.content.userInfo[ReminderCategory.itemIDKey] as? String,
-              let itemID = UUID(uuidString: itemIDString) else {
-            completionHandler()
-            return
-        }
-        NotificationActionHandler.store(NotificationActionPayload(itemID: itemID, action: action))
+        // 订阅提醒点开就是进 App；具体看哪一笔由首页自己呈现。
         completionHandler()
     }
 }

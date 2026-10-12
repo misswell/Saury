@@ -1,41 +1,29 @@
 import AppIntents
 import Foundation
 
-struct AddRenewalIntent: AppIntent {
-    static var title: LocalizedStringResource = "添加到期提醒"
-    static var description = IntentDescription("在期见中创建一个新的订阅提醒。")
+/// 快捷指令：一句话把一笔订阅带进添加页，剩下的细节让用户确认。
+struct AddSubscriptionIntent: AppIntent {
+    static var title: LocalizedStringResource = "添加订阅"
+    static var description = IntentDescription("在期见中创建一笔新订阅。")
     static var openAppWhenRun: Bool = true
 
-    @Parameter(title: "物品名称")
+    @Parameter(title: "订阅名称")
     var name: String
 
-    @Parameter(title: "多少天后到期", default: 30)
-    var days: Int
-
-    init() {
-        name = ""
-        days = 30
-    }
+    init() {}
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let safeDays = min(max(days, 0), 3650)
-        ExternalInputStore.store(.fields(ExternalItemDraft(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新物品" : name,
-            priceMinorUnits: nil,
-            currencyCode: nil,
-            expiryDate: Calendar.current.date(byAdding: .day, value: safeDays, to: Date()),
-            recurrence: nil,
-            category: nil
-        )), source: "快捷指令")
-        return .result(dialog: "已准备好添加「\(name)」，请确认日期和提醒时间。")
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        ExternalInputStore.store(.text(trimmed.isEmpty ? "新订阅" : trimmed), source: "快捷指令")
+        return .result(dialog: "已准备好添加「\(trimmed.isEmpty ? "新订阅" : trimmed)」，补上金额就能保存。")
     }
 }
 
 struct QJShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: AddRenewalIntent(), phrases: [
-            "在 \(.applicationName) 添加订阅提醒",
-            "用 \(.applicationName) 记录续费"
-        ], shortTitle: "添加到期提醒", systemImageName: "bell.badge")
+        AppShortcut(intent: AddSubscriptionIntent(), phrases: [
+            "在 \(.applicationName) 添加订阅",
+            "用 \(.applicationName) 记一笔订阅"
+        ], shortTitle: "添加订阅", systemImageName: "creditcard.badge.clock")
     }
 }

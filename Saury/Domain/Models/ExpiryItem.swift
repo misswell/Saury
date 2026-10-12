@@ -157,12 +157,6 @@ final class ExpiryItem {
 
     var hasPrice: Bool { priceMinorUnits != nil }
 
-    /// 同一件商品的分组键（方案 §30）。有条码按条码，没条码退回名称：
-    /// 第一阶段不建 Product/Batch 两张表，UI 靠这个键把批次挨在一起。
-    var productKey: String {
-        ProductIdentity.key(barcode: barcode, name: name)
-    }
-
     func markUpdated() { updatedAt = Date() }
 }
 

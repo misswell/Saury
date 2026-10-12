@@ -22,7 +22,7 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor.systemBackground
-        title = "记一条到期提醒"
+        title = "记一条订阅"
 
         preview.contentMode = .scaleAspectFit
         preview.isHidden = true

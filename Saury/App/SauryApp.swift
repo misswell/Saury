@@ -6,10 +6,13 @@ struct SauryApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     private let container: ModelContainer
+    @StateObject private var preferences = SubPreferences.shared
+    @StateObject private var exchangeRates = ExchangeRateStore.shared
+    @StateObject private var cloudSync = CloudSyncEngine.shared
 
     init() {
         do {
-            container = try PersistenceController.makeContainer()
+            container = try PersistenceController.makeContainerWithRecovery()
         } catch {
             fatalError("无法创建本地数据容器：\(error.localizedDescription)")
         }
@@ -17,7 +20,10 @@ struct SauryApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(preferences)
+                .environmentObject(exchangeRates)
+                .environmentObject(cloudSync)
         }
         .modelContainer(container)
     }

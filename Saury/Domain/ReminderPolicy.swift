@@ -22,14 +22,14 @@ enum ReminderPolicy {
     }
 
     /// 通知统一落在用户选定的时间点（方案 §44）。
-    static var reminderHour: Int { QJPreferences.reminderHour }
+    static var reminderHour: Int { 9 }
 
     /// 设置里「并入默认提醒计划」的提前天数档位。
     static let defaultDayChoices = [1, 3, 7, 14, 30]
 
     /// 新建物品用的计划：分类模板，再并入用户在设置里选的提前天数。
     static func defaultOffsets(for category: ExpiryCategory) -> [Int] {
-        normalized(templateOffsets(for: category) + [QJPreferences.defaultReminderDays * day])
+        normalized(templateOffsets(for: category) + [3 * day])
     }
 
     /// 提醒计划里可以勾选的档位。

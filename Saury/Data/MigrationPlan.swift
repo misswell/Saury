@@ -23,8 +23,15 @@ enum SaurySchemaV3: VersionedSchema {
     static var models: [any PersistentModel.Type] { [ExpiryItem.self, ExpiryEvent.self, ProductTemplate.self] }
 }
 
+/// 期见改做订阅管理的这一版。旧「物品」里只有分类为订阅的记录还有业务意义，
+/// 其余（食品、药品……）在新产品里没有对应概念，迁移时不再带过来。
+enum SaurySchemaV4: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(4, 0, 0) }
+    static var models: [any PersistentModel.Type] { [Subscription.self, SubscriptionEvent.self] }
+}
+
 enum SauryMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [SaurySchemaV1.self, SaurySchemaV2.self, SaurySchemaV3.self] }
+    static var schemas: [any VersionedSchema.Type] { [SaurySchemaV1.self, SaurySchemaV2.self, SaurySchemaV3.self, SaurySchemaV4.self] }
 
     static var stages: [MigrationStage] {
         [
@@ -51,7 +58,25 @@ enum SauryMigrationPlan: SchemaMigrationPlan {
                     try destination.save()
                 }
             ),
-            .lightweight(fromVersion: SaurySchemaV2.self, toVersion: SaurySchemaV3.self)
+            .lightweight(fromVersion: SaurySchemaV2.self, toVersion: SaurySchemaV3.self),
+            .custom(
+                fromVersion: SaurySchemaV3.self,
+                toVersion: SaurySchemaV4.self,
+                willMigrate: { source in
+                    let items = try source.fetch(FetchDescriptor<ExpiryItem>())
+                    let snapshots = items.map(LegacyExpirySnapshot.init)
+                    SauryMigrationHandoff.load(expiryItems: snapshots)
+                },
+                didMigrate: { destination in
+                    let existingIDs = Set(try destination.fetch(FetchDescriptor<Subscription>()).map(\.id))
+                    for snapshot in SauryMigrationHandoff.expiryItems where !existingIDs.contains(snapshot.id) {
+                        guard let converted = Subscription(migratedFrom: snapshot) else { continue }
+                        destination.insert(converted)
+                    }
+                    SauryMigrationHandoff.clearExpiryItems()
+                    try destination.save()
+                }
+            )
         ]
     }
 
@@ -210,15 +235,91 @@ struct LegacyDecisionSnapshot {
 enum SauryMigrationHandoff {
     nonisolated(unsafe) private(set) static var renewals: [LegacyRenewalSnapshot] = []
     nonisolated(unsafe) private(set) static var decisions: [LegacyDecisionSnapshot] = []
+    nonisolated(unsafe) private(set) static var expiryItems: [LegacyExpirySnapshot] = []
 
     static func load(renewals: [LegacyRenewalSnapshot], decisions: [LegacyDecisionSnapshot]) {
         self.renewals = renewals
         self.decisions = decisions
     }
 
+    static func load(expiryItems: [LegacyExpirySnapshot]) {
+        self.expiryItems = expiryItems
+    }
+
     static func clear() {
         renewals = []
         decisions = []
+        expiryItems = []
+    }
+
+    static func clearExpiryItems() {
+        expiryItems = []
+    }
+}
+
+/// V3 物品在迁移过桥时的形状。只有分类是订阅的记录会被接进 V4。
+struct LegacyExpirySnapshot {
+    let id: UUID
+    let name: String
+    let categoryRawValue: String
+    let expiryDate: Date
+    let priceMinorUnits: Int?
+    let currencyCode: String?
+    let recurrenceRawValue: String
+    let recurrenceInterval: Int?
+    let stateRawValue: String
+    let notes: String
+    let createdAt: Date
+    let updatedAt: Date
+
+    init(_ item: ExpiryItem) {
+        id = item.id
+        name = item.name
+        categoryRawValue = item.categoryRawValue
+        expiryDate = item.expiryDate
+        priceMinorUnits = item.priceMinorUnits
+        currencyCode = item.currencyCode
+        recurrenceRawValue = item.recurrenceRawValue
+        recurrenceInterval = item.recurrenceInterval
+        stateRawValue = item.stateRawValue
+        notes = item.notes
+        createdAt = item.createdAt
+        updatedAt = item.updatedAt
+    }
+}
+
+extension Subscription {
+    /// V3 里分类为「订阅」的到期记录直接变成一条订阅；
+    /// 其余分类（食品、药品、证件……）在新产品里没有对应物，不再迁移。
+    convenience init?(migratedFrom snapshot: LegacyExpirySnapshot) {
+        guard snapshot.categoryRawValue == ExpiryCategory.subscription.rawValue else { return nil }
+        let cycle: BillingCycle
+        let customMonths: Int
+        switch ExpiryRecurrence(rawValue: snapshot.recurrenceRawValue) ?? .none {
+        case .none: cycle = .oneTime; customMonths = 2
+        case .weekly: cycle = .weekly; customMonths = 2
+        case .monthly: cycle = .monthly; customMonths = 2
+        case .quarterly: cycle = .quarterly; customMonths = 3
+        case .everySixMonths: cycle = .semiannual; customMonths = 6
+        case .yearly: cycle = .yearly; customMonths = 12
+        case .custom: cycle = .custom; customMonths = max(snapshot.recurrenceInterval ?? 1, 1)
+        }
+        let state: SubscriptionState = snapshot.stateRawValue == ExpiryState.active.rawValue ? .autoRenew : .inactive
+        self.init(
+            id: snapshot.id,
+            name: snapshot.name,
+            priceMinorUnits: snapshot.priceMinorUnits ?? 0,
+            currencyCode: snapshot.currencyCode ?? "CNY",
+            cycle: cycle,
+            customMonths: customMonths,
+            category: "other",
+            state: state,
+            startDate: snapshot.expiryDate,
+            reminderDays: 3,
+            notes: snapshot.notes,
+            createdAt: snapshot.createdAt
+        )
+        updatedAt = snapshot.updatedAt
     }
 }
 
