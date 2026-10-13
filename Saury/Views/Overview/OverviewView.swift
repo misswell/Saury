@@ -1,14 +1,18 @@
 import SwiftUI
 import SwiftData
+import os
 
-/// 总览页。从上到下：月/季/年总额、即将扣费、分类支出、扣费日历、
-/// 支出趋势、累计花费、月均/平均每个。面板可在设置里隐藏或排序。
+/// 总览页。从上到下：月/季/年总额、待付款、即将扣费、试用中、分类支出、
+/// 扣费日历、支出趋势、累计花费、快览（月均 / 平均每个）。面板可在设置里隐藏或排序。
 struct OverviewView: View {
-    var onSelectTab: (MainTab) -> Void
+    /// 这一页的导航栈由根视图持有：换 Tab 再换回来， push 出去的那一页还在。
+    @Binding var path: NavigationPath
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var preferences: SubPreferences
+    @EnvironmentObject private var sheets: SheetRouter
     @Query private var subscriptions: [Subscription]
+    @Query private var events: [SubscriptionEvent]
 
     enum Route: Hashable {
         case calendar
@@ -16,11 +20,8 @@ struct OverviewView: View {
         case totalPaid
     }
 
-    @State private var path = NavigationPath()
     @State private var period: SubscriptionStats.StatsPeriod = .month
-    @State private var selectedSubscription: Subscription?
-    @State private var editingSubscription: Subscription?
-    @State private var showAdd = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -43,6 +44,8 @@ struct OverviewView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .background(SauryTheme.background)
+        .task { await runPeriodProbeIfNeeded() }
+        .task { await runChartProbeIfNeeded() }
         .navigationTitle("")
         .toolbarBackground(.hidden, for: .navigationBar)
         .navigationDestination(for: Route.self) { route in
@@ -51,18 +54,6 @@ struct OverviewView: View {
             case .categories: CategoryBreakdownView(stats: stats)
             case .totalPaid: TotalPaidView(stats: stats)
             }
-        }
-        .sheet(item: $selectedSubscription) { subscription in
-            SubscriptionDetailView(subscription: subscription) {
-                editingSubscription = subscription
-            }
-            .presentationDetents([.medium, .large])
-        }
-        .sheet(item: $editingSubscription) { subscription in
-            AddSubscriptionView(editing: subscription)
-        }
-        .sheet(isPresented: $showAdd) {
-            AddSubscriptionView()
         }
     }
 
@@ -73,6 +64,7 @@ struct OverviewView: View {
     private var stats: SubscriptionStats {
         SubscriptionStats(
             subscriptions: subscriptions,
+            events: events,
             defaultCurrency: preferences.defaultCurrency,
             rates: ExchangeRateStore.shared.rates
         )
@@ -124,25 +116,102 @@ struct OverviewView: View {
             panelView(panel)
                 .staged(index + 3)
         }
-        averagePanels
-            .staged(ordered.count + 3)
     }
 
     @ViewBuilder
     private func panelView(_ panel: OverviewPanel) -> some View {
         switch panel {
+        case .pendingPayment: pendingPaymentPanel
         case .upcoming: upcomingPanel
+        case .trial: trialPanel
         case .categoryBreakdown: categoryPanel
         case .calendar: calendarPanel
         case .trend: trendPanel
         case .totalPaid: totalPaidPanel
+        case .quickView: quickViewPanel
         }
+    }
+
+    /// 待付款：手动续费、真有下一笔应付日期的。自动续费的到点自己扣，不算待付款。
+    private var pendingPaymentPanel: some View {
+        let due = SubscriptionQuery.awaitingPayment(activeSubscriptions)
+        return PanelCard(title: "待付款") {
+            if due.isEmpty {
+                panelEmptyText("没有需要手动付款的订阅")
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(due.prefix(3).enumerated()), id: \.element.id) { index, item in
+                        let settle = BillingMath.nextChargeDate(for: item)
+                        scheduledRow(item,
+                                     caption: settle.map { "\(QJFormat.shortDate($0)) 应付款" } ?? "手动续费") {
+                            sheets.present(.detail(item.id))
+                        }
+                        .staged(index, delay: 0.1)
+                    }
+                    if due.count > 3 {
+                        Text("还有 \(due.count - 3) 条待付款")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 试用中：开始日还在将来的那几条 —— 先订下、到日子才生效的。
+    /// 我方没有独立的试用期字段，面板名沿用竞品清单；空态和小字里把口径写清楚。
+    private var trialPanel: some View {
+        let pending = SubscriptionQuery.notStarted(activeSubscriptions)
+        return PanelCard(title: "试用中") {
+            if pending.isEmpty {
+                panelEmptyText("没有还没开始的订阅")
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(pending.prefix(3).enumerated()), id: \.element.id) { index, item in
+                        scheduledRow(item,
+                                     caption: "\(QJFormat.shortDate(item.startDate)) 开始 · \(QJFormat.countdown(item.startDate))") {
+                            sheets.present(.detail(item.id))
+                        }
+                        .staged(index, delay: 0.1)
+                    }
+                    if pending.count > 3 {
+                        Text("还有 \(pending.count - 3) 条还没开始")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 待付款 / 试用中两个面板的公共行：图标、名字、一行小字说明、右侧金额。点一行看详情。
+    private func scheduledRow(_ subscription: Subscription,
+                              caption: String,
+                              onSelect: @escaping () -> Void) -> some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                SubscriptionIconView(subscription: subscription, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(subscription.name)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    Text(caption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(subscription.myAmount.formattedGrouped)
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(Pressable(scale: 0.98))
     }
 
     private var upcomingPanel: some View {
         PanelCard(title: "即将扣费", showsChevron: true, onTap: { path.append(Route.calendar) }) {
             UpcomingChargeCarousel(charges: stats.upcomingCharges(limit: 12)) { charge in
-                selectedSubscription = charge.subscription
+                sheets.present(.detail(charge.subscription.id))
             }
         }
     }
@@ -231,21 +300,25 @@ struct OverviewView: View {
 
     private var totalPaidPanel: some View {
         PanelCard(title: "累计支付", showsChevron: true, onTap: { path.append(Route.totalPaid) }) {
-            let cumulative = stats.cumulative()
+            let totals = stats.cumulative()
             VStack(alignment: .leading, spacing: 10) {
-                AnimatedNumber(value: cumulative.total.majorValue,
+                AnimatedNumber(value: totals.combined.majorValue,
                                format: { Money(minorUnits: Int(($0 * 100).rounded()),
-                                               currencyCode: cumulative.total.currencyCode).formattedGrouped },
+                                               currencyCode: totals.combined.currencyCode).formattedGrouped },
                                font: SauryTheme.amountFont(size: 26),
                                countsFromZeroOnAppear: true)
-                Text("覆盖 \(cumulative.perSubscription.count) 个订阅 · 共 \(cumulative.chargeCount) 笔扣费")
+                // 合计里有多少是真登记过的，得一眼能看出来。
+                Text("已登记 \(totals.recorded.formattedGrouped) · 预计 \(totals.projectedPast.formattedGrouped)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("覆盖 \(totals.perSubscription.count) 个订阅 · 共 \(totals.chargeCount) 笔")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .contentTransition(.numericText())
-                    .animation(Motion.ui, value: "\(cumulative.perSubscription.count)-\(cumulative.chargeCount)")
-                if !cumulative.perSubscription.isEmpty {
+                    .animation(Motion.ui, value: "\(totals.perSubscription.count)-\(totals.chargeCount)")
+                if !totals.perSubscription.isEmpty {
                     Divider().overlay(SauryTheme.line)
-                    ForEach(Array(cumulative.perSubscription.prefix(3).enumerated()), id: \.element.subscription.id) { index, entry in
+                    ForEach(Array(totals.perSubscription.prefix(3).enumerated()), id: \.element.subscription.id) { index, entry in
                         HStack(spacing: 10) {
                             Text("\(index + 1)")
                                 .font(.caption.weight(.semibold))
@@ -253,7 +326,9 @@ struct OverviewView: View {
                             SubscriptionIconView(subscription: entry.subscription, size: 30)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(entry.subscription.name).font(.subheadline)
-                                Text("已扣 \(entry.count) 次")
+                                Text(entry.isAllProjected
+                                     ? "预计 \(entry.projectedCount) 期"
+                                     : "已登记 \(entry.recordedCount) 次 · 预计 \(entry.projectedCount) 期")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -268,25 +343,27 @@ struct OverviewView: View {
         }
     }
 
-    /// 月均 / 平均每个：设置里开了「快览」会变成文字行，这里先做卡片形态。
-    @ViewBuilder
-    private var averagePanels: some View {
-        if preferences.compactStats {
-            let cumulative = stats.cumulative()
-            Text("月均 \(cumulative.monthlyAverage.formattedGrouped) · 平均每个 \(cumulative.perSubscriptionAverage.formattedGrouped)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            HStack(spacing: 12) {
-                let cumulative = stats.cumulative()
-                statCard(title: "月均", money: cumulative.monthlyAverage, caption: "全部摊到每月")
-                statCard(title: "平均每个", money: cumulative.perSubscriptionAverage, caption: "每个订阅 · 月")
+    /// 快览：月均 / 平均每个。设置里开了「快览（文字模式）」会收成一行字。
+    /// 原先是永远挂在面板末尾的两块，现在按竞品清单升成正式面板 —— 可以隐藏、可以排序。
+    private var quickViewPanel: some View {
+        PanelCard(title: "快览") {
+            let totals = stats.cumulative()
+            if preferences.compactStats {
+                Text("月均 \(totals.monthlyAverage.formattedGrouped) · 平均每个 \(totals.perSubscriptionAverage.formattedGrouped)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    quickStat(title: "月均", money: totals.monthlyAverage, caption: "全部摊到每月")
+                    Divider().overlay(SauryTheme.line)
+                    quickStat(title: "平均每个", money: totals.perSubscriptionAverage, caption: "每个订阅 · 月")
+                }
             }
         }
     }
 
-    private func statCard(title: String, money: Money, caption: String) -> some View {
+    private func quickStat(title: String, money: Money, caption: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.footnote).foregroundStyle(.secondary)
             AnimatedNumber(value: money.majorValue,
@@ -297,8 +374,14 @@ struct OverviewView: View {
             Text(caption).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .sauryCard()
+    }
+
+    private func panelEmptyText(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 18)
     }
 
     // MARK: - 空态
@@ -315,7 +398,7 @@ struct OverviewView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button {
-                showAdd = true
+                sheets.present(.add(prefill: .empty))
             } label: {
                 Label("添加订阅", systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
@@ -354,6 +437,80 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity)
         .sauryCard()
     }
+
+    #if DEBUG
+    private static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+
+    /// 图表连续更新（§8.4）：把「支出分类」和「支出趋势」两块临时排到最上面，让它们在同一屏里，
+    /// 然后按真的周期切换和柱/线切换各来一遍。
+    /// 走的全是用户那三条路：`preferences.panelOrder`（设置里就是拖这个）、
+    /// `withAnimation(Motion.ui) { period = … }`（`PeriodToggle` 那一句）、
+    /// `preferences.trendChartStyle`（面板右上角那个图标）。收尾把偏好放回原样。
+    private func runChartProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-chart") else { return }
+        let orderBefore = preferences.panelOrder
+        let styleBefore = preferences.trendChartStyle
+        try? await Task.sleep(for: .milliseconds(1600))
+        ProbeMarker.shared.mark("图表 起步 减少动态效果=\(reduceMotion) 面板=\(panelTitles(orderBefore))")
+        withAnimation(Motion.ui) {
+            preferences.panelOrder = [.categoryBreakdown, .trend] + OverviewPanel.allCases.filter {
+                $0 != .categoryBreakdown && $0 != .trend
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(1200))
+        for (next, gap) in [(SubscriptionStats.StatsPeriod.year, 2.2),
+                            (.quarter, 2.2),
+                            (.month, 2.4)] {
+            let slices = stats.categorySlices(preferences: preferences.categories).count
+            Self.probeLogger.log("图表探针 周期→\(next.title, privacy: .public) 分类数=\(slices) 柱数=\(stats.trendBars().count)")
+            SelectionHaptics.tick()
+            withAnimation(Motion.ui) { period = next }
+            try? await Task.sleep(for: .milliseconds(Int(gap * 1000)))
+        }
+        // 柱 ↔ 线：同一份数据换一种画法，两边的生长/形变都要跟着。
+        withAnimation(Motion.ui) { preferences.trendChartStyle = .line }
+        Self.probeLogger.log("图表探针 切到折线")
+        try? await Task.sleep(for: .milliseconds(1400))
+        SelectionHaptics.tick()
+        withAnimation(Motion.ui) { period = .quarter }
+        try? await Task.sleep(for: .milliseconds(2200))
+        withAnimation(Motion.ui) { preferences.trendChartStyle = .bars }
+        Self.probeLogger.log("图表探针 切回柱状")
+        try? await Task.sleep(for: .milliseconds(1400))
+        withAnimation(Motion.ui) { preferences.panelOrder = orderBefore }
+        preferences.trendChartStyle = styleBefore
+        ProbeMarker.shared.mark("图表 收尾 偏好已放回 周期=\(period.title)")
+    }
+
+    private func panelTitles(_ order: [OverviewPanel]) -> String {
+        order.map(\.title).joined(separator: "/")
+    }
+
+    /// 周期连点：月 → 季 → 年 来回切，间隔 240ms，比一轮数字滚动（620ms）短。
+    /// 于是后一次切换一定打在前一次还没数完的时候（§9.2「数据更新时立即切换统计周期」），
+    /// 而每一次都走 `PeriodToggle` 按钮里那同一句 `withAnimation(Motion.ui) { selection = period }`。
+    /// 日志先把**该屏应落到的那个合计**打出来，录屏最后一帧再和它对账。
+    private func runPeriodProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-period") else { return }
+        try? await Task.sleep(for: .milliseconds(1600))
+        ProbeMarker.shared.mark("周期 起步 选中 \(period.title)")
+        let script: [(SubscriptionStats.StatsPeriod, Double)] = [
+            (.quarter, 0.24), (.year, 0.24), (.month, 1.4),
+            (.year, 0.12), (.month, 0.12), (.year, 0.12), (.month, 2.2),
+        ]
+        for (next, gap) in script {
+            let total = stats.periodChargeTotal(for: next)
+            let line = "→ \(next.title) 应落合计 \(String(format: "%.2f", total.majorValue))（切换前选中 \(period.title)）"
+            Self.probeLogger.log("周期探针 \(line, privacy: .public)")
+            SelectionHaptics.tick()
+            withAnimation(Motion.ui) { period = next }
+            try? await Task.sleep(for: .milliseconds(Int(gap * 1000)))
+        }
+        let settled = stats.periodChargeTotal(for: period)
+        let last = "收尾 选中 \(period.title) 真值 \(String(format: "%.2f", settled.majorValue))"
+        ProbeMarker.shared.mark("周期 \(last)")
+    }
+    #endif
 }
 
 /// 月 / 季 / 年 切换胶囊。

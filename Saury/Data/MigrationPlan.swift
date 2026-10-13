@@ -23,13 +23,23 @@ enum SaurySchemaV3: VersionedSchema {
     static var models: [any PersistentModel.Type] { [ExpiryItem.self, ExpiryEvent.self, ProductTemplate.self] }
 }
 
-/// 期见改做订阅管理的这一版。旧「物品」里只有分类为订阅的记录还有业务意义，
+/// 期见改做订阅管理的这一版，也是当前版本。旧「物品」里只有分类为订阅的记录还有业务意义，
 /// 其余（食品、药品……）在新产品里没有对应概念，迁移时不再带过来。
 enum SaurySchemaV4: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(4, 0, 0) }
     static var models: [any PersistentModel.Type] { [Subscription.self, SubscriptionEvent.self] }
 }
 
+/// 这一版给 `Subscription` 多加了一列 `remindersEnabled`，但它**不是一条迁移阶段**，
+/// 原因是实测撞出来的：`VersionedSchema.models` 只能列活着的类型，
+/// V4 和「提醒显式模型之后那一版」列的是同一批 class，CoreData 拿到的两份模型一模一样，
+/// 于是 `.custom(fromVersion: V4, toVersion: V5)` 在建 stage 的当场就抛
+/// 「The current model reference and the next model reference cannot be equal」——
+/// 装上老库的设备一进 App 就闪退。列本身交给 CoreData 的自动轻量迁移补上（新增一列是它能推出来的改动），
+/// 而**每一行该开还是该关**由 `ReminderIntentBackfill` 在启动时补一次。
+///
+/// 回填按**用户当时看到的说法**下结论，不按调度器的行为：
+/// 旧库里 `reminderDays == 0` 在新增页和详情页都写着「不提醒」。
 enum SauryMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] { [SaurySchemaV1.self, SaurySchemaV2.self, SaurySchemaV3.self, SaurySchemaV4.self] }
 
@@ -65,18 +75,30 @@ enum SauryMigrationPlan: SchemaMigrationPlan {
                 willMigrate: { source in
                     let items = try source.fetch(FetchDescriptor<ExpiryItem>())
                     let snapshots = items.map(LegacyExpirySnapshot.init)
-                    SauryMigrationHandoff.load(expiryItems: snapshots)
+                    let events = try source.fetch(FetchDescriptor<ExpiryEvent>())
+                    SauryMigrationHandoff.load(expiryItems: snapshots,
+                                               expiryEvents: events.map(LegacyExpiryEventSnapshot.init))
                 },
                 didMigrate: { destination in
                     let existingIDs = Set(try destination.fetch(FetchDescriptor<Subscription>()).map(\.id))
+                    let existingEventIDs = Set(try destination.fetch(FetchDescriptor<SubscriptionEvent>()).map(\.id))
+                    // 已经存在的订阅同样算「活下来的」：它的事件照样要接上。
+                    var survivingItemIDs = existingIDs
                     for snapshot in SauryMigrationHandoff.expiryItems where !existingIDs.contains(snapshot.id) {
                         guard let converted = Subscription(migratedFrom: snapshot) else { continue }
                         destination.insert(converted)
+                        survivingItemIDs.insert(snapshot.id)
+                    }
+                    // 流水账跟着走：旧版每一次「已续期」「已取消」都是用户真实做过的决定，
+                    // 只搬物品不搬历史等于把账本删了一半。认领不到订阅的事件才丢。
+                    for snapshot in SauryMigrationHandoff.expiryEvents
+                    where survivingItemIDs.contains(snapshot.itemID) && !existingEventIDs.contains(snapshot.id) {
+                        destination.insert(SubscriptionEvent(migratedFrom: snapshot))
                     }
                     SauryMigrationHandoff.clearExpiryItems()
                     try destination.save()
                 }
-            )
+            ),
         ]
     }
 
@@ -111,6 +133,18 @@ enum SauryMigrationPlan: SchemaMigrationPlan {
         case .continued: return .renewed
         case .paused: return .archived
         case .snoozed: return .snoozed
+        }
+    }
+
+    /// V3 流水账 → V4 事件类型。新产品里没有「用完/丢弃/改过」这些动作，
+    /// 折到语义最近的一个，原始说法由 `SubscriptionEvent(migratedFrom:)` 写进备注。
+    static func subscriptionEventType(for snapshot: LegacyExpiryEventSnapshot) -> SubscriptionEventType {
+        switch ExpiryEventType(rawValue: snapshot.eventTypeRawValue) ?? .edited {
+        case .renewed: return .charged
+        case .cancelled, .archived, .discarded: return .paused
+        case .snoozed: return .skipped
+        case .restored: return .resumed
+        case .created, .edited, .consumed: return .note
         }
     }
 }
@@ -236,24 +270,27 @@ enum SauryMigrationHandoff {
     nonisolated(unsafe) private(set) static var renewals: [LegacyRenewalSnapshot] = []
     nonisolated(unsafe) private(set) static var decisions: [LegacyDecisionSnapshot] = []
     nonisolated(unsafe) private(set) static var expiryItems: [LegacyExpirySnapshot] = []
+    nonisolated(unsafe) private(set) static var expiryEvents: [LegacyExpiryEventSnapshot] = []
 
     static func load(renewals: [LegacyRenewalSnapshot], decisions: [LegacyDecisionSnapshot]) {
         self.renewals = renewals
         self.decisions = decisions
     }
 
-    static func load(expiryItems: [LegacyExpirySnapshot]) {
+    static func load(expiryItems: [LegacyExpirySnapshot], expiryEvents: [LegacyExpiryEventSnapshot] = []) {
         self.expiryItems = expiryItems
+        self.expiryEvents = expiryEvents
     }
 
     static func clear() {
         renewals = []
         decisions = []
-        expiryItems = []
+        clearExpiryItems()
     }
 
     static func clearExpiryItems() {
         expiryItems = []
+        expiryEvents = []
     }
 }
 
@@ -285,6 +322,33 @@ struct LegacyExpirySnapshot {
         notes = item.notes
         createdAt = item.createdAt
         updatedAt = item.updatedAt
+    }
+}
+
+/// V3 流水账在迁移过桥时的形状。新产品里没有「用完/丢弃」，
+/// 但这些决定是用户真实做过的，金额和时间必须接着往下走。
+struct LegacyExpiryEventSnapshot {
+    let id: UUID
+    let itemID: UUID
+    let itemName: String
+    let eventTypeRawValue: String
+    let priceMinorUnits: Int?
+    let currencyCode: String?
+    let happenedAt: Date
+
+    init(_ event: ExpiryEvent) {
+        id = event.id
+        itemID = event.itemID
+        itemName = event.itemName
+        eventTypeRawValue = event.eventTypeRawValue
+        priceMinorUnits = event.priceMinorUnits
+        currencyCode = event.currencyCode
+        happenedAt = event.happenedAt
+    }
+
+    /// 旧事件类型的人话名字；认不出来就退回原始字符串，不编一个假动作。
+    var legacyActionTitle: String {
+        ExpiryEventType(rawValue: eventTypeRawValue)?.title ?? eventTypeRawValue
     }
 }
 
@@ -361,6 +425,23 @@ extension ExpiryEvent {
             eventType: SauryMigrationPlan.eventType(for: snapshot),
             priceMinorUnits: snapshot.amountMinorUnits > 0 ? snapshot.amountMinorUnits : nil,
             currencyCode: snapshot.currencyCode,
+            happenedAt: snapshot.happenedAt
+        )
+    }
+}
+
+extension SubscriptionEvent {
+    /// V3 的流水账接到 V4 的时间轴上：编号、所属、金额、时间一个都不改，
+    /// 类型折到语义最近的那一个，原来的说法原样留在备注里 ——
+    /// 旧版根本没有「用完/丢弃」对应的订阅动作，硬套不如写清楚。
+    convenience init(migratedFrom snapshot: LegacyExpiryEventSnapshot) {
+        self.init(
+            id: snapshot.id,
+            subscriptionID: snapshot.itemID,
+            type: SauryMigrationPlan.subscriptionEventType(for: snapshot),
+            amountMinorUnits: snapshot.priceMinorUnits ?? 0,
+            currencyCode: snapshot.currencyCode ?? "CNY",
+            note: "旧版记录：\(snapshot.legacyActionTitle)",
             happenedAt: snapshot.happenedAt
         )
     }

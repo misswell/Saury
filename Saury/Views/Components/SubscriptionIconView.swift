@@ -82,6 +82,11 @@ final class IconImageStore {
         return image
     }
 
+    /// 文件在不在。数据体检要用它，不能为了看一眼就把整张图解码进来。
+    func exists(_ identifier: String) -> Bool {
+        !identifier.isEmpty && FileManager.default.fileExists(atPath: url(for: identifier).path)
+    }
+
     /// 存图并返回文件名；同 uuid 旧文件会被顶掉。
     func store(_ image: UIImage, id: UUID = UUID()) -> String? {
         storeScaled(image, fileName: "\(id.uuidString).png")
@@ -103,6 +108,36 @@ final class IconImageStore {
         } catch {
             return nil
         }
+    }
+
+    /// 备份要的是磁盘上的原始字节。重新编码会产出一份不一样的 PNG，
+    /// 清单里记的 SHA-256 立刻对不上，Good 图标也就白存了。
+    func data(for identifier: String?) -> Data? {
+        guard let identifier, !identifier.isEmpty else { return nil }
+        return try? Data(contentsOf: url(for: identifier))
+    }
+
+    /// 按备份里的文件名和字节原样落盘。
+    ///
+    /// 名字带路径分隔符的一律拒绝：备份是从别处选进来的文件，
+    /// 「../../Library/default.store.png」这种名字跟着写就把文件写出了图标目录。
+    @discardableResult
+    func restore(_ data: Data, named fileName: String) -> Bool {
+        guard !fileName.isEmpty, fileName != ".", fileName != "..",
+              !fileName.contains("/"), !fileName.contains("\\") else { return false }
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try data.write(to: url(for: fileName), options: .atomic)
+            cache.removeObject(forKey: fileName as NSString)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 目录里现有的图标文件名。
+    var fileNames: [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
     }
 
     func delete(_ identifier: String?) {

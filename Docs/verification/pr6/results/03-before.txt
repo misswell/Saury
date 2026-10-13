@@ -1,0 +1,18 @@
+######## "motion.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/03-period-number.mp4" "560" "140" "40" "380" "--label" "before 数字" ########
+== before 数字03-period-number.mp4 区域 560x140+40+380（缩到 96x24）窗口 0.00–1000000000.00s，帧 253，突发 4 次
+   #1 起 2.220s 跨 118ms 8 帧｜最大跳变 75.11 @ 2.305s｜最低彩色 0.0% @ 2.322s｜近全黑 0 帧
+   #2 起 3.100s 跨 693ms 47 帧｜最大跳变 25.96 @ 3.152s｜最低彩色 0.0% @ 3.100s｜近全黑 0 帧
+   #3 起 4.710s 跨 808ms 44 帧｜最大跳变 38.82 @ 5.370s｜最低彩色 0.0% @ 4.710s｜近全黑 0 帧
+   #4 起 6.698s 跨 838ms 48 帧｜最大跳变 45.50 @ 7.000s｜最低彩色 0.0% @ 6.698s｜近全黑 0 帧
+
+######## "latency.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/03-period-number.mp4" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/03-period-number.log" "560" "140" "40" "380" "--grep" "周期探针 →" "--label" "before 数字按下" ########
+== before 数字按下 区域 560x140+40+380｜打点 2 对，偏移 37261.780s（离散 24ms，平均帧间隔 45ms）
+     4.689s → +21ms（首帧动 4.710s）                     ｜[com.guofeng.saury:probe] 周期探针 → 季 应落合计 681.36（切换前选中 月）
+     4.942s → 连续操作（上一段还没落定）                         ｜[com.guofeng.saury:probe] 周期探针 → 年 应落合计 681.36（切换前选中 季）
+     5.199s → 连续操作（上一段还没落定）                         ｜[com.guofeng.saury:probe] 周期探针 → 月 应落合计 227.12（切换前选中 年）
+     6.687s → +12ms（首帧动 6.698s）                     ｜[com.guofeng.saury:probe] 周期探针 → 年 应落合计 681.36（切换前选中 月）
+     6.815s → 连续操作（上一段还没落定）                         ｜[com.guofeng.saury:probe] 周期探针 → 月 应落合计 227.12（切换前选中 年）
+     6.947s → 连续操作（上一段还没落定）                         ｜[com.guofeng.saury:probe] 周期探针 → 年 应落合计 681.36（切换前选中 月）
+     7.068s → 连续操作（上一段还没落定）                         ｜[com.guofeng.saury:probe] 周期探针 → 月 应落合计 227.12（切换前选中 年）
+   静止后按下 2 次，中位 21ms，最小 12ms，最大 21ms；另有 5 次落在上一段动画里
+

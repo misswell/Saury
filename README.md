@@ -21,7 +21,7 @@
 - 归档订阅 + 回收站（30 天保留期）、引导页三连、新功能页
 - 导出 Markdown（末尾带 AI 分析提示词）/ JSON，导入 JSON / 通用 CSV，一键清空
 - WidgetKit 小组件（回答「下一次扣费是什么」）、App Intents / 快捷指令、分享扩展接文字与链接
-- StoreKit 2 一次性支持入口（产品 ID：`com.guofeng.saury.lifetime`）
+- StoreKit 2 打赏三档，一档一个真实的内购产品（`com.guofeng.saury.tip.instant` / `.tip.americano` / `.tip.coldbrew`，价格由 StoreKit 给）
 - 主题色 8 选 1、浅色 / 深色 / 跟随系统、彩色卡片开关、快览文字模式、App 图标三态切换（自动 / 浅色 / 深色备用图标）、版本历史
 
 ## 还没有
@@ -55,7 +55,7 @@ xcodebuild -project Saury.xcodeproj \
 ## 发布前配置
 
 1. 在 Apple Developer 创建 App Group `group.com.guofeng.saury`，并绑定主 App、分享扩展和 Widget。
-2. 在 App Store Connect 创建产品 `com.guofeng.saury.lifetime`（一次性支持）。
+2. 在 App Store Connect 创建三个一次性内购产品：`com.guofeng.saury.tip.instant`、`com.guofeng.saury.tip.americano`、`com.guofeng.saury.tip.coldbrew`（打赏三档，页面价格全部来自 StoreKit；没有配置时页面明说「内购暂不可用」）。
 3. 分享扩展和 Widget 通过 App Group 交换快照与待添加条目，不需要服务器。
 4. 将来开启 iCloud 时，同步容器使用 `iCloud.com.guofeng.saury`，并在 CloudKit Dashboard 建立生产环境 schema —— 在那之前不要宣称同步能力。
 

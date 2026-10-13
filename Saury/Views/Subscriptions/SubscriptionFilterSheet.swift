@@ -7,6 +7,8 @@ struct SubscriptionFilterSheet: View {
     @EnvironmentObject private var preferences: SubPreferences
     @Query private var subscriptions: [Subscription]
 
+    private var filters: SubPreferences.ListFilters { preferences.listFilters }
+
     private var usedPaymentMethods: [String] {
         var seen: [String] = []
         for subscription in subscriptions where !subscription.paymentMethod.isEmpty {
@@ -26,6 +28,24 @@ struct SubscriptionFilterSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(filters.selectedCount == 0 ? "没设筛选条件，列表显示全部" : "已选 \(filters.selectedCount) 项")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(filters.selectedCount == 0 ? .secondary : Color.accentColor)
+                            .contentTransition(.numericText())
+                            .animation(Motion.ui, value: filters.selectedCount)
+                        Spacer()
+                        if filters.isActive {
+                            Button("清除全部") {
+                                SelectionHaptics.tick()
+                                preferences.listFilters = .init()
+                            }
+                            .font(.footnote)
+                            .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
                 Section("分类") {
                     chipGrid(preferences.categories.map { ($0.id, $0.name) }, selected: Binding(
                         get: { preferences.listFilters.categoryIDs },
@@ -53,10 +73,6 @@ struct SubscriptionFilterSheet: View {
                             set: { preferences.listFilters.currencies = $0 }
                         ))
                     }
-                }
-                Section {
-                    Button("清除全部筛选") { preferences.listFilters = .init() }
-                        .foregroundStyle(Color.accentColor)
                 }
             }
             .navigationTitle("筛选")

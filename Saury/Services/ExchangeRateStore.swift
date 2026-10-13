@@ -36,16 +36,9 @@ final class ExchangeRateStore: ObservableObject {
         updatedAt = defaults.object(forKey: Self.updatedKey) as? Date
     }
 
-    /// 换算表：从任意币种折到任意币种的乘数（目标 = 原值 × rates[from] / rates[to]）。
-    /// 这里直接暴露「每美元」表，Money.converting 按需要取。
+    /// 换算表：从任意币种折到任意币种的乘数（目标 = 原值 × rates[to] / rates[from]）。
+    /// 这里直接暴露「每美元」表，`Money.converting` 按需要取。
     var rates: [String: Double] { ratesPerUSD }
-
-    func rate(from code: String, to target: String) -> Double {
-        let fromRate = ratesPerUSD[code] ?? 1
-        let toRate = ratesPerUSD[target] ?? 1
-        guard toRate != 0 else { return 1 }
-        return fromRate / toRate
-    }
 
     /// 距上次成功更新超过 24 小时才拉一次，避免每次回前台都打网络。
     func refreshIfStale() async {

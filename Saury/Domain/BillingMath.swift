@@ -11,14 +11,19 @@ enum BillingMath {
     }
 
     /// 下一次扣费日。`onOrAfter` 为 true 时，当天本身也算（「今天扣费」）。
-    static func nextChargeDate(for subscription: Subscription, onOrAfter reference: Date = Date()) -> Date? {
+    ///
+    /// `calendar` 默认跟着设备走；提醒那一层要把「时区切换 / 夏令时」当成可注入的
+    /// 条件来测，所以整条日期链都得听调用方的，不能中途换算法。
+    static func nextChargeDate(for subscription: Subscription, onOrAfter reference: Date = Date(),
+                               calendar: Calendar = BillingMath.calendar) -> Date? {
         guard subscription.state != .inactive, subscription.cycle.isRecurring else { return nil }
         let next = advance(
             from: subscription.startDate,
             cycle: subscription.cycle,
             months: subscription.customMonths,
-            anchorDay: subscription.anchorDay,
-            onOrAfter: reference
+            anchorDay: calendar.component(.day, from: subscription.startDate),
+            onOrAfter: reference,
+            calendar: calendar
         )
         // 推出来的日子已经越过结束日，等于没有下一次。
         if let next, let endDate = subscription.endDate,
@@ -35,9 +40,9 @@ enum BillingMath {
         cycle: BillingCycle,
         months customMonths: Int,
         anchorDay: Int? = nil,
-        onOrAfter reference: Date
+        onOrAfter reference: Date,
+        calendar: Calendar = BillingMath.calendar
     ) -> Date? {
-        let calendar = BillingMath.calendar
         guard cycle.isRecurring else { return nil }
 
         let anchorDayValue = anchorDay ?? calendar.component(.day, from: anchor)
@@ -48,15 +53,16 @@ enum BillingMath {
         while current < limit {
             guardCounter += 1
             if guardCounter > 1200 { return nil }
-            guard let next = step(from: current, cycle: cycle, months: customMonths, anchorDay: anchorDayValue) else { return nil }
+            guard let next = step(from: current, cycle: cycle, months: customMonths,
+                                  anchorDay: anchorDayValue, calendar: calendar) else { return nil }
             current = next
         }
         return current
     }
 
     /// 推进一个周期，按锚点日回位（31 号 → 2 月 28 日 → 3 月 31 日）。
-    static func step(from date: Date, cycle: BillingCycle, months customMonths: Int, anchorDay: Int? = nil) -> Date? {
-        let calendar = BillingMath.calendar
+    static func step(from date: Date, cycle: BillingCycle, months customMonths: Int,
+                    anchorDay: Int? = nil, calendar: Calendar = BillingMath.calendar) -> Date? {
         switch cycle {
         case .weekly:
             return calendar.date(byAdding: .day, value: 7, to: date)
@@ -79,20 +85,22 @@ enum BillingMath {
     }
 
     /// [start, end) 之间的扣费日（start 含、end 不含）。
-    static func chargeDates(for subscription: Subscription, from start: Date, to end: Date) -> [Date] {
+    static func chargeDates(for subscription: Subscription, from start: Date, to end: Date,
+                            calendar: Calendar = BillingMath.calendar) -> [Date] {
         guard subscription.cycle.isRecurring, subscription.state != .inactive else { return [] }
-        let calendar = BillingMath.calendar
         var results: [Date] = []
         var current = calendar.startOfDay(for: subscription.startDate)
         let stop = calendar.startOfDay(for: end)
         let floor = calendar.startOfDay(for: start)
-        let anchor = subscription.anchorDay
+        let anchor = calendar.component(.day, from: subscription.startDate)
         var guardCounter = 0
         while current < stop {
             guardCounter += 1
             if guardCounter > 2400 { break }
             if current >= floor { results.append(current) }
-            guard let next = step(from: current, cycle: subscription.cycle, months: subscription.customMonths, anchorDay: anchor) else { break }
+            guard let next = step(from: current, cycle: subscription.cycle,
+                                  months: subscription.customMonths, anchorDay: anchor,
+                                  calendar: calendar) else { break }
             current = next
         }
         return results
@@ -112,25 +120,25 @@ enum BillingMath {
     }
 
     /// 折算到每月的金额（自己那份）。一次性返回 nil —— 它不进月均。
+    /// 舍入统一走 `Money.scaled`，各页面因此能拿到同一个数。
     static func monthlyNormalized(_ subscription: Subscription) -> Money? {
         guard subscription.cycle.isRecurring else { return nil }
         let mine = subscription.myAmount
+        let months: Int
         switch subscription.cycle {
         case .weekly:
-            return Money(minorUnits: Int((Double(mine.minorUnits) * 52.0 / 12.0).rounded()), currencyCode: mine.currencyCode)
+            return Money(minorUnits: Money.scaled(mine.minorUnits, by: 52, over: 12),
+                         currencyCode: mine.currencyCode)
         case .monthly:
             return mine
-        case .quarterly:
-            return Money(minorUnits: Int((Double(mine.minorUnits) / 3.0).rounded()), currencyCode: mine.currencyCode)
-        case .semiannual:
-            return Money(minorUnits: Int((Double(mine.minorUnits) / 6.0).rounded()), currencyCode: mine.currencyCode)
-        case .yearly:
-            return Money(minorUnits: Int((Double(mine.minorUnits) / 12.0).rounded()), currencyCode: mine.currencyCode)
-        case .custom:
-            return Money(minorUnits: Int((Double(mine.minorUnits) / Double(max(subscription.customMonths, 1))).rounded()), currencyCode: mine.currencyCode)
-        case .oneTime:
-            return nil
+        case .quarterly: months = 3
+        case .semiannual: months = 6
+        case .yearly: months = 12
+        case .custom: months = max(subscription.customMonths, 1)
+        case .oneTime: return nil
         }
+        return Money(minorUnits: Money.scaled(mine.minorUnits, by: 1, over: months),
+                     currencyCode: mine.currencyCode)
     }
 
     static func daysUntil(_ date: Date, from reference: Date = Date()) -> Int {

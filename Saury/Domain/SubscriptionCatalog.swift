@@ -61,6 +61,17 @@ enum IconLibrary {
             "wand.and.stars", "slider.horizontal.2", "bubble.left.and.text.bubble.right"
         ])
     ]
+
+    /// 只留下这台设备真画得出来的符号。
+    ///
+    /// SF Symbols 的名字跟着系统版本走：`newsletters.fill` 这类是较新版本才有的，
+    /// 在拿不到的系统上 `Image(systemName:)` 什么都不画 —— 格子上是个空方块，
+    /// 点下去订阅卡片也跟着空掉，用户还以为自己选了个图标。
+    /// 宁可少给几个选项，也不摆一个按得动、却什么都选不出来的格子。
+    static let availableGroups: [Group] = groups.compactMap { group in
+        let drawn = group.symbols.filter { UIImage(systemName: $0) != nil }
+        return drawn.isEmpty ? nil : Group(id: group.id, title: group.title, symbols: drawn)
+    }
 }
 
 /// 图标与卡片的调色板。顺序即图标选择器颜色行的顺序。
@@ -70,6 +81,18 @@ enum Palette {
         "#FF9F0A", "#30D158", "#63E6E2", "#64D2FF", "#FFD60A",
         "#FF6482", "#0FBFBF"
     ]
+
+    /// 图标行放不下时是会自动换行，还是把两头切掉 —— 这是个能算出来的问题。
+    /// 尺寸写在这里而不是写在视图里，算式才拦得住回归：色点一旦变宽或页面留白变小，
+    /// 540 点的一行又会顶穿屏宽。
+    static let dotSide: CGFloat = 34
+    static let dotSpacing: CGFloat = 12
+    static let rowGutter: CGFloat = 14
+
+    /// 给一行放得下几个色点。自适应网格就是这么分列的。
+    static func dotsPerRow(usableWidth: CGFloat) -> Int {
+        max(1, Int((usableWidth + dotSpacing) / (dotSide + dotSpacing)))
+    }
 
     /// 常用渐变组合（两色，主色在前）。
     static let gradients: [[String]] = [

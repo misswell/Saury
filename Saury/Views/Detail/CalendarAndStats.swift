@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import os
 
 /// 订阅日历详情：月视图 / 全年视图切换，点某天看当天扣费。
 struct SubscriptionCalendarView: View {
@@ -11,6 +12,7 @@ struct SubscriptionCalendarView: View {
     @State private var month = Date()
     @State private var monthDirection = 1
     @State private var selectedDay: Date?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var modePill
 
     var body: some View {
@@ -30,6 +32,7 @@ struct SubscriptionCalendarView: View {
             .padding(.bottom, 24)
         }
         .background(SauryTheme.background)
+        .task { await runCalendarFlipProbeIfNeeded() }
         .navigationTitle("订阅日历")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -133,10 +136,7 @@ struct SubscriptionCalendarView: View {
                 iconProvider: { subscription in SubscriptionIconView(subscription: subscription, size: 24) },
                 compact: false,
                 selectedDay: selectedDay,
-                onSelectDay: { day in
-                    SelectionHaptics.tick()
-                    withAnimation(Motion.ui) { selectedDay = day }
-                }
+                onSelectDay: { day in selectDay(day) }
             )
         }
         .padding(14)
@@ -198,20 +198,23 @@ struct SubscriptionCalendarView: View {
         let year = calendar.component(.year, from: month)
         return VStack(spacing: 12) {
             HStack {
-                Button { month = calendar.date(byAdding: .year, value: -1, to: month) ?? month } label: {
+                Button { moveYear(-1) } label: {
                     Image(systemName: "chevron.left").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                 }
+                .buttonStyle(Pressable(scale: 0.85))
                 Spacer()
                 VStack(spacing: 2) {
-                    Text(String(year)).font(.headline)
+                    Text(String(year)).font(.headline).contentTransition(.numericText())
                     Text("全年 \(yearChargeSummary.count) 笔 · \(yearChargeSummary.total.formatted)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
                 }
                 Spacer()
-                Button { month = calendar.date(byAdding: .year, value: 1, to: month) ?? month } label: {
+                Button { moveYear(1) } label: {
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                 }
+                .buttonStyle(Pressable(scale: 0.85))
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 12) {
                 ForEach(1...12, id: \.self) { monthNumber in
@@ -220,6 +223,10 @@ struct SubscriptionCalendarView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.94)))
                 }
             }
+            .id(year)
+            // 和月视图同一条方向：旧写法只改了 month，翻页方向留在上一次按下的值上，
+            // 于是点「上一年」会朝反方向滑。
+            .transition(.directionalSlide(monthDirection, distance: 30, fade: 0.15))
         }
     }
 
@@ -281,6 +288,77 @@ struct SubscriptionCalendarView: View {
             month = BillingMath.calendar.date(byAdding: .month, value: delta, to: month) ?? month
         }
     }
+
+    /// 翻年和翻月共用同一条方向语义：方向必须先写，否则新一年的网格会沿上一次按下的方向滑。
+    private func moveYear(_ delta: Int) {
+        SelectionHaptics.tick()
+        monthDirection = delta
+        withAnimation(Motion.slide) {
+            selectedDay = nil
+            month = BillingMath.calendar.date(byAdding: .year, value: delta, to: month) ?? month
+        }
+    }
+
+    /// 选中一天：触感 + 当天列表的过渡。日历格子和录屏探针都走这一句。
+    private func selectDay(_ day: Date) {
+        SelectionHaptics.tick()
+        withAnimation(Motion.ui) { selectedDay = day }
+    }
+
+    #if DEBUG
+    private static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+
+    /// 「日历翻月的方向正确」+「连续快速点击上一月、下一月没有空白帧」（§8.4）。
+    ///
+    /// 每 130ms 一下，比一轮翻页（`Motion.slide` 440ms）短，所以第 2 下起都打在上一次还没走完时；
+    /// 日志把「第几下、方向、按下前是哪个月、方向量是多少」逐条对上，
+    /// 「有没有空白帧」由录屏逐帧去数 —— 这一步只在探针里跑，用户走的入口不依赖它。
+    /// 翻年要在全年视图里按：旧写法坏的就是那一对箭头（不写方向、不进 `withAnimation`），
+    /// 在月视图里量不到。收尾再切回月视图点一天，让当天那一份扣费列表跟着出来。
+    private func runCalendarFlipProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-months") else { return }
+        try? await Task.sleep(for: .milliseconds(1500))
+        let start = "起步 减少动态效果=\(reduceMotion) 月=\(QJFormat.yearMonth(month)) 视图=\(modeTitle)"
+        ProbeMarker.shared.mark("日历 \(start)")
+        for step in 0..<8 {
+            let delta = step < 4 ? 1 : -1
+            let line = "第\(step + 1)下 delta=\(delta) 按下前=\(QJFormat.yearMonth(month)) 方向=\(monthDirection)"
+            Self.probeLogger.log("日历探针 \(line, privacy: .public)")
+            moveMonth(delta)
+            try? await Task.sleep(for: .milliseconds(130))
+        }
+        SelectionHaptics.tick()
+        withAnimation(Motion.slide) { mode = .year }
+        try? await Task.sleep(for: .milliseconds(130))
+        for step in 0..<4 {
+            let delta = step % 2 == 0 ? -1 : 1
+            let line = "翻年\(step + 1) delta=\(delta) 按下前=\(calendarYearText) 方向=\(monthDirection)"
+            Self.probeLogger.log("日历探针 \(line, privacy: .public)")
+            moveYear(delta)
+            try? await Task.sleep(for: .milliseconds(130))
+        }
+        SelectionHaptics.tick()
+        withAnimation(Motion.slide) { mode = .month }
+        try? await Task.sleep(for: .milliseconds(1500))
+        let rest = "收尾 月=\(QJFormat.yearMonth(month)) 视图=\(modeTitle) 方向=\(monthDirection) 选中日=\(selectedDayText)"
+        ProbeMarker.shared.mark("日历 \(rest)")
+        if let day = stats.chargesByDay(in: month).keys.sorted().first {
+            let picked = "点日 \(QJFormat.shortDate(day)) \(stats.charges(on: day).count) 笔"
+            Self.probeLogger.log("日历探针 \(picked, privacy: .public)")
+            selectDay(day)
+        }
+    }
+
+    private var calendarYearText: String {
+        String(BillingMath.calendar.component(.year, from: month))
+    }
+
+    private var modeTitle: String { mode == .month ? "月" : "全年" }
+
+    private var selectedDayText: String {
+        selectedDay.map { QJFormat.shortDate($0) } ?? "无"
+    }
+    #endif
 }
 
 /// 支出分类详情：每个分类的月/年合计和它名下的订阅。
@@ -387,31 +465,42 @@ struct TotalPaidView: View {
     }
 
     private var headerCard: some View {
-        let cumulative = stats.cumulative()
+        let totals = stats.cumulative()
         return VStack(spacing: 6) {
             Text("总累计")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            AnimatedNumber(value: cumulative.total.majorValue,
+            AnimatedNumber(value: totals.combined.majorValue,
                            format: { Money(minorUnits: Int(($0 * 100).rounded()),
-                                           currencyCode: cumulative.total.currencyCode).formattedGrouped },
+                                           currencyCode: totals.combined.currencyCode).formattedGrouped },
                            font: SauryTheme.amountFont(size: 34),
                            countsFromZeroOnAppear: true)
-            Text("覆盖 \(cumulative.perSubscription.count) 个订阅 · 共 \(cumulative.chargeCount) 笔扣费")
+            // 有凭据的和不虚报的分开报：只贴一个合计就是把预计当已付。
+            Text("已登记 \(totals.recorded.formattedGrouped) · 预计 \(totals.projectedPast.formattedGrouped)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            Text("覆盖 \(totals.perSubscription.count) 个订阅 · 共 \(totals.chargeCount) 笔")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if totals.uncertainCount > 0 {
+                Text("其中 \(totals.uncertainCount) 笔按现价估算")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
         .sauryCard()
     }
 
-    private func rowCard(_ entry: (subscription: Subscription, count: Int, total: Money)) -> some View {
+    private func rowCard(_ entry: SubscriptionLedger.SubscriptionSummary) -> some View {
         HStack(spacing: 12) {
             SubscriptionIconView(subscription: entry.subscription, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.subscription.name).font(.subheadline.weight(.medium))
-                Text("已扣 \(entry.count) 次")
+                Text(entry.isAllProjected
+                     ? "预计 \(entry.projectedCount) 期"
+                     : "已登记 \(entry.recordedCount) 次 · 预计 \(entry.projectedCount) 期")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -506,7 +595,7 @@ struct ReceiptCanvas: View {
     let accent: Color
 
     var body: some View {
-        let cumulative = stats.cumulative()
+        let totals = stats.cumulative()
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 4) {
                 Text("QI JIAN")
@@ -531,12 +620,14 @@ struct ReceiptCanvas: View {
             }
             .padding(.vertical, 6)
 
-            ForEach(cumulative.perSubscription, id: \.subscription.id) { entry in
+            ForEach(totals.perSubscription, id: \.subscription.id) { entry in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.subscription.name)
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     HStack {
-                        Text("× \(entry.count) 期")
+                        Text(entry.isAllProjected
+                             ? "预计 \(entry.chargeCount) 期"
+                             : "× \(entry.chargeCount) 期（登记 \(entry.recordedCount)）")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -552,11 +643,11 @@ struct ReceiptCanvas: View {
                 Text("合计")
                     .font(.system(size: 14, weight: .heavy, design: .monospaced))
                 Spacer()
-                Text(cumulative.total.formatted)
+                Text(totals.combined.formatted)
                     .font(.system(size: 16, weight: .heavy, design: .monospaced))
             }
             .padding(.vertical, 8)
-            Text("共 \(cumulative.chargeCount) 笔扣费")
+            Text("已登记 \(totals.recordedCount) 笔 · 预计 \(totals.projectedCount) 笔 · 共 \(totals.chargeCount) 笔")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
 

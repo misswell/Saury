@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 import StoreKit
+import UIKit
+import os
 
 /// 存储管理：图标缓存。
 struct StorageSettingsView: View {
@@ -30,7 +32,9 @@ struct StorageSettingsView: View {
             } header: {
                 Text("存储管理")
             } footer: {
-                Text("清除已删除订阅遗留的图标文件。当前使用中的订阅图标不会被删除。")
+                // 「使用中」按字面算：归档和回收站里的也算（上面 `keep` 取的是整库那一条），
+                // 回收站那条随时能被恢复，它的图不能当垃圾清掉。
+                Text("清除已经没有任何订阅在用的图标文件。彻底删除和回收站到期清理会自动释放只属于那一条的图标；几条订阅共用一张图时，那张要等都不用了才清得掉。这里额外收的是换过图标之后留下的旧文件。当前在用的（含归档和回收站）不会被删除。")
             }
         }
         .scrollContentBackground(.hidden)
@@ -224,7 +228,13 @@ struct WhatsNewView: View {
     }
 }
 
-/// 支持开发者：一次性打赏位（用现有终身买断产品承载，不解锁任何功能）。
+/// 支持开发者：三档一次性打赏，一档一个真实的 StoreKit 产品。
+///
+/// 这里以前是三行写死的「¥8 / ¥22 / ¥38」——那是不能按的装饰，
+/// 页面底下另有一个按钮买的是同一个终身产品。任务书 §10.4 说的就是这件事：
+/// 多档不同金额不得展示成一个固定售价的支付入口。
+/// 现在每一档自己可点、价格由 StoreKit 给（含币种与本地化格式），
+/// 成功 / 取消 / 待批准 / 验证失败 / 下架五种结果在页面上各说各的话。
 struct TipJarView: View {
     @EnvironmentObject private var preferences: SubPreferences
     @Environment(\.dismiss) private var dismiss
@@ -237,6 +247,7 @@ struct TipJarView: View {
                     .font(.system(size: 56))
                     .frame(width: 96, height: 96)
                     .background(Circle().fill(Color.accentColor.opacity(0.12)))
+                    .accessibilityHidden(true)
                     .staged(0, edge: .top)
                 Text("你养的不是订阅，是开发者")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -247,41 +258,35 @@ struct TipJarView: View {
                     .multilineTextAlignment(.center)
                     .staged(2, delay: 0.1)
 
-                tipRow(emoji: "☕️", title: "速溶咖啡", caption: "一包速溶冲下去，提神继续敲代码", price: "¥8")
-                    .staged(3, delay: 0.15)
-                tipRow(emoji: "🧋", title: "冰美式", caption: "冰美式续命，Bug 一个个退散", price: "¥22")
-                    .staged(4, delay: 0.2)
-                tipRow(emoji: "🫖", title: "冷萃咖啡", caption: "冷萃慢慢滴，功能慢慢磨", price: "¥38")
-                    .staged(5, delay: 0.25)
+                ForEach(Array(TipTier.allCases.enumerated()), id: \.element.id) { index, tier in
+                    tipRow(tier).staged(3 + index, delay: 0.15 + Double(index) * 0.05)
+                }
 
-                if let product = store.product {
-                    Button {
-                        SelectionHaptics.impact(.medium)
-                        Task { await store.purchase(product) }
-                    } label: {
-                        Text(store.isPurchased ? "已支持，谢谢！" : "请开发者喝一杯")
-                            .font(.headline)
-                            .contentTransition(.opacity)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Capsule().fill(Color.accentColor))
-                    }
-                    .buttonStyle(Pressable(scale: 0.96, animation: Motion.pop))
-                    .disabled(store.isPurchased)
-                    .animation(Motion.pop, value: store.isPurchased)
-                    .staged(6, delay: 0.3)
-                } else {
-                    Text("内购暂不可用")
+                if store.isSellable == false {
+                    Text("内购暂不可用：没从商店取到任何一档打赏产品。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .staged(6, delay: 0.3)
+                }
+
+                Button("恢复购买") { Task { await store.restore() } }
+                    .font(.footnote.weight(.semibold))
+                    .staged(7, delay: 0.32)
+
+                if let notice = store.restoreNotice {
+                    Text(notice)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity)
                 }
 
                 Text("完全自愿 · 不解锁任何功能 · 一次性，不是订阅\n你都在用订阅管理 App 了，就别再给自己加一个叫期见的订阅啦 😜")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .staged(7, delay: 0.35)
+                    .staged(8, delay: 0.35)
             }
             .padding(20)
         }
@@ -294,24 +299,335 @@ struct TipJarView: View {
             }
         }
         .task { await store.load() }
+        .animation(Motion.ui, value: store.restoreNotice)
     }
 
-    private func tipRow(emoji: String, title: String, caption: String, price: String) -> some View {
-        HStack(spacing: 12) {
-            Text(emoji).font(.system(size: 28))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(caption).font(.caption).foregroundStyle(.secondary)
+    private func tipRow(_ tier: TipTier) -> some View {
+        let status = store.status(of: tier)
+        return Button {
+            Task { await store.buy(tier) }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text(tier.emoji)
+                        .font(.system(size: 28))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tier.title).font(.subheadline.weight(.semibold))
+                        Text(tier.caption).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    trailing(for: status, tier: tier)
+                }
+                // 出错时原因写在行里，不靠胶囊变红来传达（§11.2：颜色不能是唯一手段）。
+                if case .problem(let reason) = status {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(Color(red: 0.86, green: 0.24, blue: 0.24))
+                        .lineLimit(3)
+                }
             }
-            Spacer()
-            Text(price)
+            .padding(12)
+            .sauryCard()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(Pressable(scale: 0.98, animation: Motion.pop))
+        .disabled(status == .buying || status == .unavailable)
+        .accessibilityLabel(spokenLabel(for: tier, status: status))
+        // 「已收到」只是一句谢谢，打赏不是一次买断：过一会儿让这一档重新可买。
+        .task(id: status == .thanked) {
+            guard status == .thanked else { return }
+            try? await Task.sleep(for: .seconds(2.5))
+            guard Task.isCancelled == false else { return }
+            store.clearThanks(tier)
+        }
+        .animation(Motion.pop, value: status)
+    }
+
+    @ViewBuilder
+    private func trailing(for status: TipStatus, tier: TipTier) -> some View {
+        switch status {
+        case .buying:
+            ProgressView().controlSize(.small)
+        case .thanked:
+            Label("已收到", systemImage: "checkmark.seal.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+        case .pending:
+            Text("等待确认").font(.footnote).foregroundStyle(.secondary)
+        case .unavailable:
+            Text("暂不可用").font(.footnote).foregroundStyle(.tertiary)
+        case .problem:
+            Text(store.quote(of: tier)?.displayPrice ?? "—")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Capsule().fill(Color(white: 0.35)))
+        case .available:
+            Text(store.quote(of: tier)?.displayPrice ?? "—")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(Capsule().fill(Color.accentColor))
+        }
+    }
+
+    /// 朗读要把「哪一档、多少钱、现在能不能买」说全，只念名字等于没念。
+    private func spokenLabel(for tier: TipTier, status: TipStatus) -> String {
+        let price = store.quote(of: tier)?.displayPrice ?? "价格未取到"
+        let tail: String
+        switch status {
+        case .buying: tail = "，正在购买"
+        case .thanked: tail = "，已收到，谢谢"
+        case .pending: tail = "，等待确认"
+        case .unavailable: tail = "，当前不可购买"
+        case .problem: tail = "，上一次没成功"
+        case .available: tail = ""
+        }
+        return "\(tier.title)，\(price)\(tail)。\(tier.caption)"
+    }
+}
+
+/// 小玩具：抽一个订阅 + 几条真算出来的冷知识。
+///
+/// 竞品设置里的「小玩具」「其他」两页在录屏中从未展开过，里面有什么不可判定 ——
+/// 这两页是我方自己的设计（矩阵 EON-071 只对齐「入口存在」这件事，不声称内容一致）。
+struct ToysView: View {
+    @EnvironmentObject private var preferences: SubPreferences
+    @EnvironmentObject private var sheets: SheetRouter
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Query private var subscriptions: [Subscription]
+
+    @State private var seed = UUID()
+    @State private var picked: Subscription?
+
+    /// 抽签与冷知识都只看在册的；「登记过」那条按全库算。
+    private var rows: [Subscription] {
+        subscriptions.filter { $0.deletedAt == nil && $0.archivedAt == nil }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                if let picked {
+                    Button {
+                        sheets.present(.detail(picked.id))
+                    } label: {
+                        pickedCard(picked)
+                    }
+                    .buttonStyle(Pressable(scale: 0.98, animation: Motion.pop))
+                    .id(picked.id)
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+                } else {
+                    Text(rows.isEmpty ? "先添加几笔订阅，再来抽签。" : "点下面的按钮，抽到哪个今天就用哪个。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Button {
+                    roll()
+                } label: {
+                    Label(picked == nil ? "帮我选一个" : "再抽一次", systemImage: "dice")
+                }
+                .disabled(rows.isEmpty)
+            } header: {
+                Text("今天用哪个")
+            } footer: {
+                Text("在在册的订阅里公平抽一条；置顶的不进抽签池 —— 置顶是找得快，不是每次都被翻牌子。")
+            }
+            Section {
+                LabeledContent("登记过", value: "\(subscriptions.count) 笔")
+                if let oldest = SubscriptionQuery.oldest(rows) {
+                    LabeledContent("陪我最久", value: "\(oldest.name) · \(QJFormat.shortDate(oldest.startDate)) 起")
+                }
+                if let priciest = SubscriptionQuery.priciest(rows,
+                                                             defaultCurrency: preferences.defaultCurrency,
+                                                             rates: ExchangeRateStore.shared.rates) {
+                    LabeledContent("最贵的一笔", value: "\(priciest.name) · \(priciest.myAmount.formattedGrouped)")
+                }
+            } header: {
+                Text("冷知识")
+            } footer: {
+                Text("「登记过」按库里的全部算，含归档和回收站；另外两条只看在册的。")
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(SauryTheme.background)
+        .navigationTitle("小玩具")
+        .navigationBarTitleDisplayMode(.inline)
+        #if DEBUG
+        .task { await runGapProbeIfNeeded() }
+        #endif
+    }
+
+    #if DEBUG
+    /// 对齐缺口探针（矩阵 EON-071）在小玩具页这一头：抽一次、再抽一次，各拍一帧。
+    /// 对账两件事：抽出来的是库里的真行（把名字和金额读出来），第二次会换人。
+    private func runGapProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-gaps") else { return }
+        try? await Task.sleep(for: .seconds(1.4))
+        _ = await ProbeShutter.capture("gaps-02-toys-before", settle: 0.3)
+        roll()
+        try? await Task.sleep(for: .seconds(0.9))
+        let first = picked.map { "\($0.name) · \($0.myAmount.formattedGrouped)" } ?? "没抽出来"
+        Self.gapProbeLogger.log("对齐探针 小玩具第一次抽：\(first, privacy: .public)，池子 \(self.rows.count) 条")
+        _ = await ProbeShutter.capture("gaps-02-toys-picked", settle: 0.6)
+        roll()
+        try? await Task.sleep(for: .seconds(0.9))
+        let second = picked.map { "\($0.name) · \($0.myAmount.formattedGrouped)" } ?? "没抽出来"
+        Self.gapProbeLogger.log("对齐探针 小玩具第二次抽：\(second, privacy: .public)，换人了=\(first != second)")
+        _ = await ProbeShutter.capture("gaps-03-toys-reroll", settle: 0.6)
+    }
+
+    private static let gapProbeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+    #endif
+
+    private func pickedCard(_ subscription: Subscription) -> some View {
+        HStack(spacing: 12) {
+            SubscriptionIconView(subscription: subscription, size: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(subscription.name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(subscription.cycle.title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(subscription.myAmount.formattedGrouped)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
         .padding(12)
         .sauryCard()
+        .contentShape(Rectangle())
+    }
+
+    private func roll() {
+        guard rows.isEmpty == false else { return }
+        SelectionHaptics.impact(.light)
+        var candidate: Subscription?
+        // 抽到和上一次同一条就再摇一颗 seed，最多四颗 —— 池子小的时候抽中重复
+        // 会被当成「按钮坏了」；四颗还撞同一个人就认了，随机本来就允许重复。
+        for _ in 0..<4 {
+            seed = UUID()
+            candidate = SubscriptionQuery.randomPick(rows, seed: seed,
+                                                     defaultCurrency: preferences.defaultCurrency,
+                                                     rates: ExchangeRateStore.shared.rates)
+            if candidate?.id != picked?.id || rows.count == 1 { break }
+        }
+        if reduceMotion {
+            picked = candidate
+        } else {
+            withAnimation(Motion.pop) { picked = candidate }
+        }
+    }
+}
+
+/// 其他：版本与数据概况，外加一键复制诊断信息。
+///
+/// 与 `ToysView` 同一个前提：竞品这一页内容不可判定，这里是我方自己的设计（矩阵 EON-071）。
+struct MiscSettingsView: View {
+    @Query private var subscriptions: [Subscription]
+    @Query private var events: [SubscriptionEvent]
+
+    @State private var copied = false
+
+    var body: some View {
+        List {
+            Section("版本") {
+                LabeledContent("版本", value: versionText)
+                LabeledContent("系统", value: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                LabeledContent("机型", value: deviceText)
+            }
+            Section("数据概况") {
+                LabeledContent("订阅", value: "在册 \(liveCount) · 归档 \(archivedCount) · 回收站 \(trashedCount)")
+                LabeledContent("账单事件", value: "\(events.count) 条")
+            }
+            Section {
+                Button {
+                    copyDiagnostics()
+                } label: {
+                    Label(copied ? "已复制" : "复制诊断信息", systemImage: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                }
+                .disabled(copied)
+            } footer: {
+                Text("复制的内容只有版本与条数这类信息，不含订阅名称、金额或任何备注 —— 发给开发者排查问题时不会带上你的隐私。")
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(SauryTheme.background)
+        .navigationTitle("其他")
+        .navigationBarTitleDisplayMode(.inline)
+        #if DEBUG
+        .task { await runGapProbeIfNeeded() }
+        #endif
+    }
+
+    #if DEBUG
+    /// 对齐缺口探针（矩阵 EON-071）在「其他」页这一头：拍一帧本页，
+    /// 按「复制诊断信息」按钮走的同一个方法，再把剪贴板读回来对账 ——
+    /// 证明复制出去的就是这页上此刻显示的那些数字，且不含任何订阅名和金额。
+    private func runGapProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-gaps") else { return }
+        try? await Task.sleep(for: .seconds(1.4))
+        _ = await ProbeShutter.capture("gaps-04-misc-top", settle: 0.8)
+        copyDiagnostics()
+        try? await Task.sleep(for: .milliseconds(450))
+        let pasted = UIPasteboard.general.string ?? "（剪贴板读不出来）"
+        let digest = pasted.replacingOccurrences(of: "\n", with: " ／ ")
+        Self.gapProbeLogger.log("对齐探针 其他页复制出来的：\(digest, privacy: .public)")
+        _ = await ProbeShutter.capture("gaps-05-misc-copied", settle: 0.6)
+    }
+
+    private static let gapProbeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+    #endif
+
+    private var versionText: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "v\(version) (\(build))"
+    }
+
+    /// 真机给的是 iPhone17,1 这样的机型代号；模拟器里是 arm64 / x86_64。
+    private var machineIdentifier: String {
+        var info = utsname()
+        uname(&info)
+        let mirror = Mirror(reflecting: info.machine)
+        return mirror.children.reduce(into: "") { partial, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            partial.append(Character(UnicodeScalar(UInt8(value))))
+        }
+    }
+
+    private var deviceText: String { "\(UIDevice.current.model) · \(machineIdentifier)" }
+
+    private var liveCount: Int {
+        subscriptions.filter { $0.deletedAt == nil && $0.archivedAt == nil }.count
+    }
+
+    private var archivedCount: Int {
+        subscriptions.filter { $0.deletedAt == nil && $0.archivedAt != nil }.count
+    }
+
+    private var trashedCount: Int { subscriptions.filter { $0.deletedAt != nil }.count }
+
+    private func copyDiagnostics() {
+        let text = """
+        期见 · 诊断信息
+        版本：\(versionText)
+        系统：\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)
+        机型：\(deviceText)
+        订阅：在册 \(liveCount) · 归档 \(archivedCount) · 回收站 \(trashedCount)
+        账单事件：\(events.count) 条
+        """
+        UIPasteboard.general.string = text
+        SelectionHaptics.success()
+        withAnimation(Motion.ui) { copied = true }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(Motion.ui) { copied = false }
+        }
     }
 }

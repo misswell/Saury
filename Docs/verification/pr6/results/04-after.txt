@@ -1,0 +1,16 @@
+######## "motion.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/04-charts-morph.mp4" "1090" "620" "40" "1180" "--label" "after 图表" ########
+== after 图表04-charts-morph.mp4 区域 1090x620+40+1180（缩到 96x55）窗口 0.00–1000000000.00s，帧 560，突发 7 次
+   #1 起 2.227s 跨 168ms 11 帧｜最大跳变 28.43 @ 2.277s｜最低彩色 0.0% @ 2.395s｜近全黑 0 帧
+   #2 起 3.465s 跨 443ms 30 帧｜最大跳变 27.33 @ 3.532s｜最低彩色 0.0% @ 3.465s｜近全黑 0 帧
+   #3 起 4.028s 跨 0ms 1 帧｜最大跳变 1.04 @ 4.028s｜最低彩色 5.6% @ 4.028s｜近全黑 0 帧
+   #4 起 4.322s 跨 0ms 1 帧｜最大跳变 4.49 @ 4.322s｜最低彩色 9.4% @ 4.322s｜近全黑 0 帧
+   #5 起 5.190s 跨 287ms 18 帧｜最大跳变 55.39 @ 5.257s｜最低彩色 4.0% @ 5.357s｜近全黑 0 帧
+   #6 起 13.655s 跨 85ms 5 帧｜最大跳变 1.89 @ 13.688s｜最低彩色 4.5% @ 13.705s｜近全黑 0 帧
+   #7 起 18.742s 跨 283ms 18 帧｜最大跳变 62.33 @ 18.792s｜最低彩色 2.7% @ 18.775s｜近全黑 0 帧
+
+######## "latency.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/04-charts-morph.mp4" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/04-charts-morph.log" "1090" "620" "40" "1180" "--grep" "图表探针 切" "--label" "after 图表按下" ########
+== after 图表按下 区域 1090x620+40+1180｜打点 2 对，偏移 37624.462s（离散 27ms，平均帧间隔 34ms）
+    13.542s → +113ms（首帧动 13.655s）                   ｜[com.guofeng.saury:probe] 图表探针 切到折线
+    17.199s → +1543ms（首帧动 18.742s）                  ｜[com.guofeng.saury:probe] 图表探针 切回柱状
+   静止后按下 2 次，中位 1543ms，最小 113ms，最大 1543ms；另有 0 次落在上一段动画里
+

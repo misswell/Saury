@@ -1,17 +1,34 @@
 import SwiftUI
 import SwiftData
+import os
 
 /// 订阅详情。半高 sheet 弹出：状态、单价、下次扣费、花费、时间轴、其他。
 struct SubscriptionDetailView: View {
     let subscription: Subscription
-    var onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var preferences: SubPreferences
     @Query private var events: [SubscriptionEvent]
 
-    @State private var showingEventEditor = false
+    /// 这一页自己的那一层。编辑本页和记一笔新事件都从这里走：
+    /// 同一层挂两张 sheet，SwiftUI 只认第一张，第二张点下去没反应。
+    private enum Layer: Identifiable {
+        case subscriptionEditor
+        case eventEditor
+
+        var id: Self { self }
+    }
+
+    @State private var layer: Layer?
+    @State private var feedback: WriteFeedback?
+
+    private var repository: SubscriptionRepository { SubscriptionRepository(context: modelContext) }
+    /// 触感、撤销、那句话的写法跟列表页同一份实现（`SubscriptionActions`）。
+    /// 失败提示挂在本页那一条上（sheet 会盖住根视图的），撤销入口挂根视图（这一页一关就没了）。
+    private var actions: SubscriptionActions {
+        SubscriptionActions(repository: repository, local: $feedback)
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,8 +59,9 @@ struct SubscriptionDetailView: View {
                     HStack(spacing: 2) {
                         Button {
                             SelectionHaptics.tick()
-                            onEdit()
-                            dismiss()
+                            // 编辑挂在本页自己这一层：不关详情、不换父层的 sheet，
+                            // 所以关掉编辑就是回到刚才那条订阅。
+                            layer = .subscriptionEditor
                         } label: {
                             Image(systemName: "square.and.pencil")
                                 .font(.system(size: 15, weight: .semibold))
@@ -54,22 +72,31 @@ struct SubscriptionDetailView: View {
                         .buttonStyle(Pressable(scale: 0.88, animation: Motion.pop))
                         Menu {
                             Button {
-                                subscription.pinnedAt = subscription.isPinned ? nil : Date()
-                                subscription.markUpdated()
+                                actions.setPinned([subscription], !subscription.isPinned)
                             } label: {
                                 Label(subscription.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
                             }
-                            Button {
-                                subscription.archivedAt = Date()
-                                subscription.markUpdated()
-                                dismiss()
-                            } label: {
+                            Button(action: archiveSubscription) {
                                 Label("归档", systemImage: "archivebox")
                             }
+                            Menu {
+                                ForEach(SubscriptionState.allCases, id: \.self) { state in
+                                    Button {
+                                        actions.setState([subscription], to: state)
+                                    } label: {
+                                        if subscription.state == state {
+                                            Label(state.title, systemImage: "checkmark")
+                                        } else {
+                                            Text(state.title)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("状态：\(subscription.state.title)", systemImage: "circle.lefthalf.filled")
+                            }
                             Button(role: .destructive) {
-                                subscription.deletedAt = Date()
-                                subscription.markUpdated()
-                                dismiss()
+                                // 落成了才关页；没落成页面留在原地，错误显示在本页那条上。
+                                if actions.moveToTrash([subscription]) { dismiss() }
                             } label: {
                                 Label("移入回收站", systemImage: "trash")
                             }
@@ -79,21 +106,68 @@ struct SubscriptionDetailView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingEventEditor) {
-                SubscriptionEventEditor(subscription: subscription)
-                    .presentationDetents([.medium])
+            .sheet(item: $layer) { layer in
+                switch layer {
+                case .subscriptionEditor:
+                    AddSubscriptionView(editing: subscription)
+                        .presentationDragIndicator(.visible)
+                case .eventEditor:
+                    SubscriptionEventEditor(subscription: subscription)
+                        .presentationDetents([.medium])
+                }
             }
         }
+        .writeFeedback($feedback)
         #if DEBUG
-        // 模拟器操作验证用（`-saury-ops`）：合成不了点击，就复刻「归档」按钮里那两行，
-        // 让软删除真的写进库，再从数据库和截图外面核对。
+        // 模拟器操作验证用。命令里没有辅助功能权限，合成不了点击，就直接调界面上那个按钮
+        // 走的同一个方法，让这一层真的把改动写进库，再从数据库和截图外面核对。
         .task {
-            guard ProcessInfo.processInfo.arguments.contains("-saury-ops") else { return }
-            try? await Task.sleep(for: .milliseconds(1000))
-            subscription.archivedAt = Date()
-            subscription.markUpdated()
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("-saury-ops") {
+                opsProbe("详情出现，1 秒后按归档")
+                try? await Task.sleep(for: .milliseconds(1000))
+                archiveSubscription()
+            }
+            if arguments.contains("-saury-nav") {
+                // 详情→编辑：按的就是工具栏那支笔的同一句 `layer = .subscriptionEditor`。
+                // 每一步都留一行日志：截图只能证明「这一帧长什么样」，
+                // 外面按秒去猜哪一帧是哪一步猜不准，时间戳才对得上。
+                probe("详情出现")
+                try? await Task.sleep(for: .milliseconds(1400))
+                layer = .subscriptionEditor
+                probe("打开编辑层")
+                // 再把编辑关掉：这一层是详情自己挂的，关掉之后该还看见这一条的详情，
+                // 而不是连详情页一起掉回列表。
+                try? await Task.sleep(for: .seconds(6))
+                layer = nil
+                probe("关掉编辑层")
+            }
         }
         #endif
+    }
+
+    #if DEBUG
+    /// 导航探针的时间戳。类别单开一个 `probe`，读日志时不用在满屏 data 里捞。
+    private static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+
+    private func probe(_ step: String) {
+        Self.probeLogger.log("导航探针 \(step, privacy: .public)")
+    }
+
+    /// 同一层的两步分属两个剧本：`-saury-nav` 看的是详情页的栈，`-saury-ops` 看的是归档闭环。
+    /// 打同一个标签，读日志时就分不出哪一步是谁跑的了。
+    private func opsProbe(_ step: String) {
+        Self.probeLogger.log("操作探针 \(step, privacy: .public)")
+    }
+    #endif
+
+    /// 归档：写库成功后才关页。失败的话页面留在原地，错误显示在本页那条上。
+    private func archiveSubscription() {
+        let archived = actions.archive([subscription])
+        #if DEBUG
+        opsProbe(archived ? "归档成功，撤销条该在根视图上" : "归档失败，错误显示在本页那一条上")
+        #endif
+        if archived { dismiss() }
     }
 
     private var relatedEvents: [SubscriptionEvent] {
@@ -159,7 +233,10 @@ struct SubscriptionDetailView: View {
             if let end = subscription.endDate {
                 row("结束于", value: QJFormat.longDate(end))
             }
-            row("提前提醒", value: subscription.reminderDays > 0 ? "提前 \(subscription.reminderDays) 天" : "不提醒")
+            // 开关和天数各说各的：0 天是「扣费当天」，不是「不提醒」（§5.1）。
+            row("扣费提醒", value: subscription.remindersEnabled
+                ? (subscription.reminderDays == 0 ? "扣费当天" : "提前 \(subscription.reminderDays) 天")
+                : "不提醒")
         }
     }
 
@@ -188,84 +265,64 @@ struct SubscriptionDetailView: View {
 
     private var spendSection: some View {
         SectionCard(title: "花费") {
-            let cumulative = detailCumulative()
+            let totals = detailStats.cumulative()
+            let buckets = detailStats.monthlyBuckets()
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
-                    AnimatedNumber(value: cumulative.total.majorValue,
+                    AnimatedNumber(value: totals.combined.majorValue,
                                    format: { Money(minorUnits: Int(($0 * 100).rounded()),
-                                                   currencyCode: cumulative.total.currencyCode).formattedGrouped },
+                                                   currencyCode: totals.combined.currencyCode).formattedGrouped },
                                    font: SauryTheme.amountFont(size: 24),
                                    countsFromZeroOnAppear: true)
                     Spacer()
-                    Text("共 \(cumulative.count) 期")
+                    Text("共 \(totals.chargeCount) 期")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
                 }
-                ForEach(Array(cumulative.periods.enumerated()), id: \.element.label) { index, period in
+                ForEach(Array(buckets.enumerated()), id: \.element.monthStart) { index, bucket in
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("\(priceLine) × \(period.count) 期")
+                            Text("\(priceLine) × \(bucket.chargeCount) 期")
                                 .font(.subheadline)
                                 .foregroundStyle(Color(hex: preferences.accentHex) ?? .accentColor)
-                            Text(period.label)
+                            Text(QJFormat.yearMonth(bucket.monthStart)
+                                 + (bucket.recordedCount == 0 ? " · 预计" : " · 登记 \(bucket.recordedCount)"))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(period.total.formatted)
+                        Text(bucket.total.formatted)
                             .font(.subheadline.weight(.semibold).monospacedDigit())
                     }
                     .padding(.vertical, 7)
                     .staged(index, delay: 0.15)
                 }
-                if cumulative.periods.isEmpty {
+                if buckets.isEmpty {
                     Text("还没有发生扣费。")
                         .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if totals.recordedCount > 0, totals.projectedCount > 0 {
+                    Text("其中 \(totals.recordedCount) 笔是你登记过的，\(totals.projectedCount) 笔按周期推算。")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private var priceLine: String {
-        "\(subscription.myAmount.formatted)/\(cycleWord)"
+    /// 详情页不再自己算一遍：同一批数字全部出自统计服务，
+    /// 这样详情、总览、小票看到的累计一定一致。
+    private var detailStats: SubscriptionStats {
+        SubscriptionStats(subscriptions: [subscription],
+                          events: relatedEvents,
+                          defaultCurrency: preferences.defaultCurrency,
+                          rates: ExchangeRateStore.shared.rates)
     }
 
-    private func detailCumulative() -> (total: Money, count: Int, periods: [(label: String, count: Int, total: Money)]) {
-        let rates = ExchangeRateStore.shared.rates
-        var buckets: [String: (count: Int, minor: Int)] = [:]
-        var totalCount = 0
-        var totalMinor = 0
-        for event in relatedEvents where event.type == .charged {
-            let amount = event.amount ?? subscription.myAmount
-            let converted = amount.converting(to: preferences.defaultCurrency, rates: rates)
-            let key = QJFormat.yearMonth(event.happenedAt)
-            buckets[key, default: (0, 0)].count += 1
-            buckets[key, default: (0, 0)].minor += converted.minorUnits
-            totalCount += 1
-            totalMinor += converted.minorUnits
-        }
-        // 手动没记过扣费时，把开始以来的计划扣费也计入「花费」——账面上的确花过。
-        if totalCount == 0 {
-            let calendar = BillingMath.calendar
-            let dates = subscription.cycle.isRecurring
-                ? BillingMath.chargeDates(for: subscription, from: subscription.startDate, to: Date())
-                : (BillingMath.isStarted(subscription) ? [subscription.startDate] : [])
-            for date in dates {
-                let converted = subscription.myAmount.converting(to: preferences.defaultCurrency, rates: rates)
-                let key = QJFormat.yearMonth(date)
-                buckets[key, default: (0, 0)].count += 1
-                buckets[key, default: (0, 0)].minor += converted.minorUnits
-                totalCount += 1
-                totalMinor += converted.minorUnits
-            }
-            _ = calendar
-        }
-        let periods = buckets
-            .map { key, value in (label: key, count: value.count, total: Money(minorUnits: value.minor, currencyCode: preferences.defaultCurrency)) }
-            .sorted { $0.label > $1.label }
-        return (Money(minorUnits: totalMinor, currencyCode: preferences.defaultCurrency), totalCount, periods)
+    private var priceLine: String {
+        "\(subscription.myAmount.formatted)/\(cycleWord)"
     }
 
     // MARK: - 时间轴
@@ -274,7 +331,7 @@ struct SubscriptionDetailView: View {
         SectionCard(title: "时间轴", trailing: {
             AnyView(
                 Button {
-                    showingEventEditor = true
+                    layer = .eventEditor
                 } label: {
                     Label("添加事件", systemImage: "plus.circle.fill")
                         .font(.footnote.weight(.medium))
@@ -316,8 +373,7 @@ struct SubscriptionDetailView: View {
                                     .font(.caption2.monospacedDigit())
                                     .foregroundStyle(.secondary)
                                 Button(role: .destructive) {
-                                    SelectionHaptics.impact(.medium)
-                                    withAnimation(Motion.ui) { modelContext.delete(event) }
+                                    actions.remove(event)
                                 } label: {
                                     Image(systemName: "trash")
                                         .font(.caption2)
@@ -422,6 +478,12 @@ struct SubscriptionEventEditor: View {
     @State private var amountText = ""
     @State private var note = ""
     @State private var date = Date()
+    /// 这一次登记的稳定身份：连点两次「保存」补的是同一条记录，不会记成两笔钱。
+    @State private var eventID = UUID()
+    @State private var isSaving = false
+    @State private var feedback: WriteFeedback?
+
+    private var repository: SubscriptionRepository { SubscriptionRepository(context: modelContext) }
 
     var body: some View {
         NavigationStack {
@@ -431,9 +493,14 @@ struct SubscriptionEventEditor: View {
                         Text(event.title).tag(event)
                     }
                 }
-                if type == .charged || type == .priceChanged || type == .inAppPurchase {
+                if takesAmount {
                     TextField("金额（\(subscription.currencyCode)）", text: $amountText)
                         .keyboardType(.decimalPad)
+                    if let issue = amountIssue {
+                        Text(issue.message)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
                 }
                 DatePicker("日期", selection: $date, displayedComponents: .date)
                 TextField("备注（可选）", text: $note)
@@ -445,32 +512,63 @@ struct SubscriptionEventEditor: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("保存") { save() }
-                        .fontWeight(.semibold)
+                    Button(action: save) {
+                        if isSaving {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("保存")
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .animation(Motion.ui, value: isSaving)
+                    .disabled(!canSave)
+                    .accessibilityLabel(isSaving ? "正在保存" : "保存")
                 }
             }
         }
+        .writeFeedback($feedback)
     }
 
+    private var takesAmount: Bool {
+        type == .charged || type == .priceChanged || type == .inAppPurchase
+    }
+
+    private var parsedAmount: Money? {
+        guard takesAmount else { return nil }
+        return try? MoneyParsing.parse(amountText, currencyCode: subscription.currencyCode).get()
+    }
+
+    /// 填了却解析不出来就直接拦住：按下保存只会存成 0，等于把用户记的那笔钱记丢。
+    private var amountIssue: MoneyParsing.Failure? {
+        guard takesAmount else { return nil }
+        return MoneyParsing.validate(amountText, currencyCode: subscription.currencyCode)
+    }
+
+    private var canSave: Bool { amountIssue == nil && !isSaving }
+
     private func save() {
-        var minor = 0
-        if type == .charged || type == .priceChanged || type == .inAppPurchase {
-            let normalized = amountText.replacingOccurrences(of: ",", with: ".")
-            minor = Int(((Double(normalized) ?? 0) * 100).rounded())
-        }
-        let event = SubscriptionEvent(
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+
+        let minor = parsedAmount?.minorUnits ?? 0
+        let draft = SubscriptionEventDraft(
+            id: eventID,
             subscriptionID: subscription.id,
             type: type,
             amountMinorUnits: minor,
             currencyCode: minor != 0 ? subscription.currencyCode : "",
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            note: note,
             happenedAt: date
         )
-        if type == .priceChanged, minor > 0 {
-            subscription.priceMinorUnits = minor
+        do {
+            // 调价「改价 + 留痕」是仓库里的一次写入，页面不再自己拼。
+            try repository.record(draft)
+        } catch {
+            SelectionHaptics.error()
+            feedback = .failure(error.localizedDescription)
+            return
         }
-        modelContext.insert(event)
-        subscription.markUpdated()
         SelectionHaptics.success()
         dismiss()
     }

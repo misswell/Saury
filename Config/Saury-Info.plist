@@ -25,5 +25,43 @@
 			<true/>
 		</dict>
 	</dict>
+	<!-- 完整备份包：带清单的压缩容器（见 BackupContainer），扩展名 .saurybackup。
+	     必须在这里登记 UTI，否则「分享」出去的包在文件 App 里只是个未知类型，
+	     也选不回本 App 恢复。 -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>期见完整备份</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.guofeng.saury.backup</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>期见完整备份</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.guofeng.saury.backup</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>saurybackup</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

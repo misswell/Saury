@@ -1,0 +1,7 @@
+######## "motion.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before-reduce-motion/03-period-number.mp4" "560" "140" "40" "380" "--label" "before-reduce-motion 数字" ########
+== before-reduce-motion 数字03-period-number.mp4 区域 560x140+40+380（缩到 96x24）窗口 0.00–1000000000.00s，帧 254，突发 4 次
+   #1 起 2.232s 跨 267ms 17 帧｜最大跳变 7.56 @ 2.385s｜最低彩色 0.0% @ 2.415s｜近全黑 0 帧
+   #2 起 3.085s 跨 647ms 43 帧｜最大跳变 28.95 @ 3.145s｜最低彩色 0.0% @ 3.085s｜近全黑 0 帧
+   #3 起 4.765s 跨 817ms 43 帧｜最大跳变 42.09 @ 4.915s｜最低彩色 0.0% @ 4.765s｜近全黑 0 帧
+   #4 起 6.772s 跨 840ms 48 帧｜最大跳变 34.90 @ 6.813s｜最低彩色 0.0% @ 6.772s｜近全黑 0 帧
+

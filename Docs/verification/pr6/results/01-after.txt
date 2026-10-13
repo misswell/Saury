@@ -1,0 +1,11 @@
+######## "fling.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/01-carousel-fling.mp4" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/01-carousel-fling.log" "1090" "420" "40" "760" "--grep" "探针 up" "--quiet" "120" ########
+== 01-carousel-fling.mp4 区域 1090x420+40+760｜打点 2 对，离散 24ms
+   #1 松手 4.918s｜首帧动 +17ms｜到停 888ms/48 帧｜最大跳变 47.96｜最低彩色 841‰｜近全黑 0 帧
+   #2 松手 5.164s｜首帧动 +20ms｜到停 640ms/34 帧｜最大跳变 47.96｜最低彩色 841‰｜近全黑 0 帧
+   #3 松手 5.405s｜首帧动 +10ms｜到停 408ms/24 帧｜最大跳变 47.96｜最低彩色 841‰｜近全黑 0 帧
+   #4 松手 5.647s｜首帧动 +20ms｜到停 157ms/10 帧｜最大跳变 12.16｜最低彩色 870‰｜近全黑 0 帧
+
+######## "track.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/after/01-carousel-fling.mp4" "40" "760" "1090" "420" "--max" "60" "--label" "after" ########
+== after01-carousel-fling.mp4 剖面 1090x420+40+760｜帧 241｜静止 144｜最大单帧位移（px）：2.375s -279  2.393s -279  2.410s -279  2.418s -279  2.437s -279  2.453s -279
+   超过 1/4 页宽（272px）的瞬移帧：62 次，最大 279px
+

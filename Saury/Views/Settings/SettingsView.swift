@@ -4,12 +4,8 @@ import StoreKit
 
 /// 设置主页。
 struct SettingsView: View {
-    var demoRoute: Route? = nil
-
     @EnvironmentObject private var preferences: SubPreferences
     @Query private var subscriptions: [Subscription]
-
-    @State private var pushedDemoRoute: Route?
 
     enum Route: Hashable {
         case appearance, layout
@@ -17,15 +13,10 @@ struct SettingsView: View {
         case archive, trash
         case data, storage
         case whatsNew, aboutApp, tipJar
+        case toys, misc
     }
 
-    var body: some View {
-        if let pushedDemoRoute {
-            destination(for: pushedDemoRoute)
-        } else {
-            homeList
-        }
-    }
+    var body: some View { homeList }
 
     @ViewBuilder
     private func destination(for route: Route) -> some View {
@@ -43,6 +34,8 @@ struct SettingsView: View {
         case .whatsNew: WhatsNewView(standalone: true)
         case .aboutApp: AboutAppView()
         case .tipJar: TipJarView()
+        case .toys: ToysView()
+        case .misc: MiscSettingsView()
         }
     }
 
@@ -51,7 +44,10 @@ struct SettingsView: View {
             Section("偏好") {
                 NavigationLink(value: Route.appearance) { Label("外观", systemImage: "circle.lefthalf.filled") }
                 NavigationLink(value: Route.layout) { Label("总览布局", systemImage: "square.grid.2x2") }
-                NavigationLink(value: Route.notifications) { Label("通知", systemImage: "bell") }
+                // 竞品设置里「小玩具」「其他」就在这一组、外观/总览布局后面（矩阵 EON-039/071）。
+                // 两页内容是我方自己的设计：竞品那两页在录屏里从未展开过，对不上内容、只对齐「入口存在」。
+                NavigationLink(value: Route.toys) { Label("小玩具", systemImage: "gamecontroller") }
+                NavigationLink(value: Route.misc) { Label("其他", systemImage: "ellipsis.circle") }
             }
             Section("订阅") {
                 NavigationLink(value: Route.currency) {
@@ -59,6 +55,7 @@ struct SettingsView: View {
                 }
                 NavigationLink(value: Route.categories) { Label("分类", systemImage: "tag") }
                 NavigationLink(value: Route.payments) { Label("支付方式", systemImage: "creditcard") }
+                NavigationLink(value: Route.notifications) { Label("通知", systemImage: "bell") }
                 NavigationLink(value: Route.archive) { Label("归档订阅", systemImage: "archivebox") }
                 NavigationLink(value: Route.trash) { Label("回收站", systemImage: "trash") }
             }
@@ -77,11 +74,6 @@ struct SettingsView: View {
         .navigationTitle("设置")
         .navigationDestination(for: Route.self) { route in
             destination(for: route)
-        }
-        .onAppear {
-            if pushedDemoRoute == nil {
-                pushedDemoRoute = demoRoute
-            }
         }
     }
 }
@@ -129,10 +121,10 @@ struct AppearanceSettingsView: View {
                 }
                 .padding(.vertical, 8)
             }
+            // 说明的话术在 `AppIconSwitcher` 自己那里：它要按这台设备能不能换图标分成两句话说，
+            // 挂在这一层只会重复一遍，还会把「系统会弹确认」这种没验过的说法留在屏幕上。
             Section {
                 AppIconSwitcher()
-            } footer: {
-                Text("「自动」跟随系统在亮/暗色间切换。切换时系统会弹一下确认提示。")
             }
             Section {
                 Toggle("彩色订阅卡片", isOn: Binding(
@@ -163,7 +155,7 @@ struct LayoutSettingsView: View {
                     set: { preferences.compactStats = $0 }
                 ))
             } footer: {
-                Text("开启后，月均和平均每个以文字形式显示在总额下方，不再占用独立卡片位置。")
+                Text("开启后，月均和平均每个在「快览」面板里收成一行文字，不再各占一张卡片。")
             }
             Section {
                 let visible = preferences.panelOrder.filter { !preferences.hiddenPanels.contains($0) }
@@ -426,6 +418,7 @@ struct PaymentMethodSettingsView: View {
 /// 通知设置。
 struct NotificationSettingsView: View {
     @EnvironmentObject private var preferences: SubPreferences
+    @Query private var storedSubscriptions: [Subscription]
     @State private var authorized: UNAuthorizationStatus = .notDetermined
     @State private var countdown: Int?
 
@@ -435,28 +428,40 @@ struct NotificationSettingsView: View {
                 Toggle("开启提醒", isOn: Binding(
                     get: { preferences.notificationsEnabled },
                     set: { enabled in
-                        preferences.notificationsEnabled = enabled
-                        if enabled {
-                            Task {
-                                let granted = await SubscriptionScheduler.shared.requestAuthorization()
-                                if !granted { preferences.notificationsEnabled = false }
-                            }
+                        // 先拿到系统授权再落这个开关。反过来写会留一小段假状态：
+                        // 开关已经是「开」，而系统那边一条都挂不上（实测排入 3、挂着 0）。
+                        guard enabled else {
+                            preferences.notificationsEnabled = false
+                            return
+                        }
+                        Task {
+                            let granted = await SubscriptionScheduler.shared.requestAuthorization()
+                            preferences.notificationsEnabled = granted
+                            authorized = await SubscriptionScheduler.shared.authorizationStatus()
                         }
                     }
                 ))
             } footer: {
-                Text(authorized == .authorized
-                    ? "通知已开启，我们会按每个订阅的设置准时提醒你。"
-                    : "开启后，订阅会在扣费前按时提醒你；系统首次会请求通知权限。")
+                Text(footerText)
             }
 
             Section {
-                Stepper(value: Binding(
-                    get: { preferences.defaultReminderDays },
-                    set: { preferences.defaultReminderDays = $0 }
-                ), in: 0...30) {
-                    Text(preferences.defaultReminderDays == 0 ? "新建订阅不提醒" : "新建订阅默认提前 \(preferences.defaultReminderDays) 天提醒")
-                        .font(.subheadline)
+                // §5.1：「要不要提醒」和「提前几天」是两件事，不能再让 0 兼职表达「不提醒」。
+                Toggle("新建订阅默认提醒", isOn: Binding(
+                    get: { preferences.defaultRemindersEnabled },
+                    set: { preferences.defaultRemindersEnabled = $0 }
+                ))
+                if preferences.defaultRemindersEnabled {
+                    Stepper(value: Binding(
+                        get: { preferences.defaultReminderDays },
+                        set: { preferences.defaultReminderDays = $0 }
+                    ), in: 0...30) {
+                        Text(preferences.defaultReminderDays == 0
+                            ? "扣费当天提醒"
+                            : "提前 \(preferences.defaultReminderDays) 天提醒")
+                            .font(.subheadline)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
                 Stepper(value: Binding(
                     get: { preferences.reminderHour },
@@ -466,8 +471,9 @@ struct NotificationSettingsView: View {
                         .font(.subheadline.monospacedDigit())
                 }
             } footer: {
-                Text("新建订阅默认就用这个提醒天数，之后单条可改；提醒落在当天的整点。")
+                Text("开关只管新建的订阅，已有的订阅在自己的页面里改；提前 0 天就是扣费当天，提醒落在当天的整点。")
             }
+            .animation(Motion.ui, value: preferences.defaultRemindersEnabled)
 
             Section {
                 Button {
@@ -496,11 +502,31 @@ struct NotificationSettingsView: View {
         }
     }
 
+    /// 页脚说系统此刻真会做什么，而不是开关的样子。
+    /// 依据是模拟器实测：没授权时排多少条系统都不挂，这时候界面还写「会准时提醒你」
+    /// 就是假话（任务书 §16：不把静态 UI 当作完整功能）。
+    private var footerText: String {
+        switch authorized {
+        case .authorized:
+            return preferences.notificationsEnabled
+                ? "通知已开启，我们会按每个订阅的设置准时提醒你。"
+                : "开关现在是关的：订阅不会提醒，系统里已经挂着的也会被撤掉。"
+        case .denied:
+            return "系统里已经拒绝通知，所以一条提醒都挂不上。去「设置 → 通知 → 期见」允许后，下一轮会自动补排。"
+        case .provisional, .ephemeral:
+            return "通知以静默方式送达（进通知中心，不弹横幅）。想要横幅需要在系统设置里允许通知。"
+        default:
+            return "开启后，订阅会在扣费前按时提醒你；系统首次会请求通知权限。"
+        }
+    }
+
     private func sendPreview() async {
         let granted = await SubscriptionScheduler.shared.requestAuthorization()
         guard granted else { return }
         countdown = 3
-        SubscriptionScheduler.shared.sendPreview(after: 3)
+        // 拿一条真订阅写正文：预览该预览用户将来真会看到的那句话。
+        // 库里一条都没有时才退回示例，那种情况点进去只会提示「找不到」。
+        SubscriptionScheduler.shared.sendPreview(subscription: storedSubscriptions.first, after: 3)
         while let current = countdown, current > 0 {
             try? await Task.sleep(for: .seconds(1))
             countdown = (countdown ?? 1) - 1
@@ -509,12 +535,18 @@ struct NotificationSettingsView: View {
     }
 }
 
-/// 归档订阅列表：可以恢复或彻底删除。
+/// 归档订阅列表：可以恢复、移入回收站，或彻底删除。
 struct ArchiveListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Subscription> { $0.archivedAt != nil && $0.deletedAt == nil })
     private var archived: [Subscription]
     @EnvironmentObject private var preferences: SubPreferences
+
+    private var repository: SubscriptionRepository { SubscriptionRepository(context: modelContext) }
+    private var actions: SubscriptionActions { SubscriptionActions(repository: repository) }
+
+    /// 等用户确认的那一条。「彻底删除」不可撤销，所以必须先把话说清楚再动手。
+    @State private var pendingForever: Subscription?
 
     var body: some View {
         List {
@@ -535,24 +567,20 @@ struct ArchiveListView: View {
                     }
                     Spacer()
                     Button("恢复") {
-                        SelectionHaptics.success()
-                        withAnimation(Motion.ui) {
-                            subscription.archivedAt = nil
-                            subscription.markUpdated()
-                        }
+                        withAnimation(Motion.ui) { _ = actions.unarchive([subscription]) }
                     }
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(Pressable(scale: 0.92))
+                    Button("彻底删除") { pendingForever = subscription }
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .buttonStyle(Pressable(scale: 0.92))
                 }
                 .staged(min(index, 8))
                 .transition(.opacity.combined(with: .move(edge: .leading)))
                 .swipeActions {
                     Button(role: .destructive) {
-                        SelectionHaptics.impact(.medium)
-                        withAnimation(Motion.ui) {
-                            subscription.deletedAt = Date()
-                            subscription.markUpdated()
-                        }
+                        withAnimation(Motion.ui) { _ = actions.moveToTrash([subscription]) }
                     } label: {
                         Label("删除", systemImage: "trash")
                     }
@@ -564,15 +592,49 @@ struct ArchiveListView: View {
         .background(SauryTheme.background)
         .navigationTitle("归档订阅")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(confirmTitle, isPresented: confirmBinding, titleVisibility: .visible) {
+            Button("彻底删除，不可恢复", role: .destructive) {
+                if let target = pendingForever {
+                    withAnimation(Motion.ui) { _ = actions.deleteForever([target]) }
+                }
+                pendingForever = nil
+            }
+            Button("取消", role: .cancel) { pendingForever = nil }
+        } message: {
+            Text("这条订阅连同它的历史扣费记录一起从本机删掉，没有撤销入口。同步过的设备会把它移进回收站。")
+        }
+    }
+
+    private var confirmTitle: String {
+        "彻底删除「\(pendingForever?.name ?? "")」？"
+    }
+
+    private var confirmBinding: Binding<Bool> {
+        Binding(get: { pendingForever != nil },
+                set: { if !$0 { pendingForever = nil } })
     }
 }
 
-/// 回收站：30 天后自动清除，期间随时恢复。
+/// 回收站：软删除的订阅随时可以恢复，也可以当场彻底删除。
+///
+/// 满保留期的那几条会在进这一页时被真的清掉（另外两处在冷启动和回到前台，
+/// 见 `TrashJanitor`）。判据是 `deletedAt` 加日历天，写在 `TrashPolicy`；
+/// 这一屏那句「还剩 N 天」、页脚那条规则、清完之后弹的那句话，
+/// 全部读同一份数字 —— 以前这里写着「保留 30 天」却没有任何一处按它清过。
 struct TrashView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Subscription> { $0.deletedAt != nil })
     private var deleted: [Subscription]
     @EnvironmentObject private var preferences: SubPreferences
+    @EnvironmentObject private var writeFeedback: WriteFeedbackCenter
+
+    private var repository: SubscriptionRepository { SubscriptionRepository(context: modelContext) }
+    private var actions: SubscriptionActions { SubscriptionActions(repository: repository) }
+
+    @State private var pendingForever: Subscription?
+    /// 这一屏的「现在」：每行那句「还剩 N 天」跟着它算。
+    /// 每渲染一次读一次 `Date()` 的话，列表会在动画中间自己改字。
+    @State private var renderedAt = Date()
 
     var body: some View {
         List {
@@ -588,21 +650,21 @@ struct TrashView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(subscription.name).font(.subheadline.weight(.medium))
                             if let deletedAt = subscription.deletedAt {
-                                Text("删除于 " + QJFormat.shortDate(deletedAt) + " · 保留 30 天")
+                                Text(remainingText(deletedAt))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         Spacer()
                         Button("恢复") {
-                            SelectionHaptics.success()
-                            withAnimation(Motion.ui) {
-                                subscription.deletedAt = nil
-                                subscription.markUpdated()
-                            }
+                            withAnimation(Motion.ui) { _ = actions.restoreFromTrash([subscription]) }
                         }
                         .font(.footnote.weight(.semibold))
                         .buttonStyle(Pressable(scale: 0.92))
+                        Button("彻底删除") { pendingForever = subscription }
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .buttonStyle(Pressable(scale: 0.92))
                     }
                     .staged(min(index, 8))
                     .transition(.opacity.combined(with: .move(edge: .leading)))
@@ -614,5 +676,55 @@ struct TrashView: View {
         .background(SauryTheme.background)
         .navigationTitle("回收站")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if deleted.isEmpty == false {
+                Text(retentionFootnote)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, SauryTheme.screen)
+                    .padding(.vertical, 8)
+            }
+        }
+        .confirmationDialog(confirmTitle, isPresented: confirmBinding, titleVisibility: .visible) {
+            Button("彻底删除，不可恢复", role: .destructive) {
+                if let target = pendingForever {
+                    withAnimation(Motion.ui) { _ = actions.deleteForever([target]) }
+                }
+                pendingForever = nil
+            }
+            Button("取消", role: .cancel) { pendingForever = nil }
+        } message: {
+            Text("这条订阅连同它的历史扣费记录一起从本机删掉，没有撤销入口。同步过的设备会把它移进回收站。")
+        }
+        .task {
+            // 「现在」和到期判定用同一个时刻，页面上那句「还剩 N 天」才不会和这一脚删掉的东西打架。
+            renderedAt = Date()
+            let report = TrashJanitor(repository: repository, now: renderedAt).run()
+            guard report.isQuiet == false, let message = report.feedback else { return }
+            writeFeedback.show(message)
+        }
+    }
+
+    private func remainingText(_ deletedAt: Date) -> String {
+        "删除于 \(QJFormat.shortDate(deletedAt)) · "
+            + TrashPolicy.notice(for: deletedAt, now: renderedAt)
+    }
+
+    private var retentionFootnote: String {
+        """
+        移入回收站起保留 \(TrashPolicy.retentionDays) 天，到期自动彻底删除：连同它的历史扣费记录、\
+        以及只属于这一条的图标文件（几条订阅共用一张图时那张会留下）。这期间随时可以恢复，\
+        「恢复」会把删除时间清掉，重新按在用的算。想留着历史花费又不想在列表里看到它，请用「归档」而不是删除。
+        """
+    }
+
+    private var confirmTitle: String {
+        "彻底删除「\(pendingForever?.name ?? "")」？"
+    }
+
+    private var confirmBinding: Binding<Bool> {
+        Binding(get: { pendingForever != nil },
+                set: { if !$0 { pendingForever = nil } })
     }
 }

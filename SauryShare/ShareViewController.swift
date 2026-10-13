@@ -91,7 +91,9 @@ final class ShareViewController: UIViewController {
                 }
                 if let text = Self.text(from: item), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     self.textView.text = text
-                    self.hint.text = self.isLink ? "链接会记在「来源」里，名字先取域名。" : "第一行会当作物品名字。"
+                    self.hint.text = self.isLink
+                        ? "链接会记在新增页的备注里，名字先取域名。"
+                        : "第一行会当作订阅名字，剩下的内容带进备注。"
                     return
                 }
                 self.showUnavailable(error == nil
@@ -106,7 +108,9 @@ final class ShareViewController: UIViewController {
         preview.image = image
         preview.isHidden = false
         textView.isHidden = true
-        hint.text = "「期见」会识别包装上的日期，认完再确认，不会直接存。"
+        // 这里不承诺识别：主 App 没有 OCR 这条路，说了就是假话（§10.5）。
+        // 图片的真正落点是新增页的图标格子，用户确认之后才存。
+        hint.text = "这张图会当成新订阅的图标带过去。名字和金额还是要你填，确认了才会存。"
     }
 
     private func showUnavailable(_ message: String) {

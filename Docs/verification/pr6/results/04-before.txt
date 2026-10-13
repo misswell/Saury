@@ -1,0 +1,14 @@
+######## "motion.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/04-charts-morph.mp4" "1090" "620" "40" "1180" "--label" "before 图表" ########
+== before 图表04-charts-morph.mp4 区域 1090x620+40+1180（缩到 96x55）窗口 0.00–1000000000.00s，帧 329，突发 5 次
+   #1 起 2.222s 跨 160ms 10 帧｜最大跳变 30.18 @ 2.280s｜最低彩色 0.0% @ 2.382s｜近全黑 0 帧
+   #2 起 3.085s 跨 562ms 34 帧｜最大跳变 27.67 @ 3.142s｜最低彩色 0.0% @ 3.085s｜近全黑 0 帧
+   #3 起 3.915s 跨 0ms 1 帧｜最大跳变 4.49 @ 3.915s｜最低彩色 9.4% @ 3.915s｜近全黑 0 帧
+   #4 起 5.978s 跨 290ms 18 帧｜最大跳变 63.63 @ 6.048s｜最低彩色 3.7% @ 6.133s｜近全黑 0 帧
+   #5 起 14.682s 跨 102ms 7 帧｜最大跳变 1.50 @ 14.715s｜最低彩色 6.1% @ 14.783s｜近全黑 0 帧
+
+######## "latency.py" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/04-charts-morph.mp4" "/Users/guofeng/Code/solo/Saury/build/verification/pr6/before/04-charts-morph.log" "1090" "620" "40" "1180" "--grep" "图表探针 切" "--label" "before 图表按下" ########
+== before 图表按下 区域 1090x620+40+1180｜打点 2 对，偏移 37280.366s（离散 12ms，平均帧间隔 56ms）
+    13.096s → +1585ms（首帧动 14.682s）                  ｜[com.guofeng.saury:probe] 图表探针 切到折线
+    16.878s → 找不到后续运动                               ｜[com.guofeng.saury:probe] 图表探针 切回柱状
+   静止后按下 1 次，中位 1585ms，最小 1585ms，最大 1585ms；另有 0 次落在上一段动画里
+

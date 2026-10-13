@@ -124,6 +124,14 @@ final class Subscription {
     // 时间
     var startDate: Date
     var endDate: Date?
+    /// 要不要为这条订阅排扣费提醒。任务书 §5.1：这件事必须由这个开关说，
+    /// 不许再拿 `reminderDays == 0` 兼职表达「不提醒」——0 的语义是「当天提醒」。
+    ///
+    /// `= true` 不是摆设：CoreData 的自动轻量迁移只肯补「可空或有默认值」的列，
+    /// NOT NULL 又没默认值它就不肯替老库猜一个值。这个默认只活一瞬 ——
+    /// 老库那几行紧接着由 `ReminderIntentBackfill` 按当初界面上的说法重算。
+    var remindersEnabled: Bool = true
+    /// 提前几天提醒；0 = 扣费当天。
     var reminderDays: Int
 
     // 分摊
@@ -161,6 +169,7 @@ final class Subscription {
         state: SubscriptionState = .autoRenew,
         startDate: Date = Date(),
         endDate: Date? = nil,
+        remindersEnabled: Bool = true,
         reminderDays: Int = 3,
         shareEnabled: Bool = false,
         shareHeadcount: Int = 2,
@@ -186,7 +195,8 @@ final class Subscription {
         self.stateRawValue = state.rawValue
         self.startDate = startDate
         self.endDate = endDate
-        self.reminderDays = reminderDays
+        self.remindersEnabled = remindersEnabled
+        self.reminderDays = max(reminderDays, 0)
         self.shareEnabled = shareEnabled
         self.shareHeadcount = max(shareHeadcount, 1)
         self.shareModeRawValue = shareMode.rawValue
@@ -226,23 +236,24 @@ final class Subscription {
     var isTracked: Bool { deletedAt == nil && archivedAt == nil && state != .inactive }
     var isPinned: Bool { pinnedAt != nil }
 
+    /// 只打时间戳。「通知各消费方」归 `SubscriptionRepository.commit`：
+    /// 一次批量操作广播一遍就够，逐条广播会把提醒重排和小组件快照打成连环重绘。
     func markUpdated() {
         updatedAt = Date()
-        // 任何字段变化都可能改变「下一次扣费」，让提醒队列跟一拍。
-        NotificationCenter.default.post(name: .sauryDataChanged, object: nil)
     }
 
     /// 账单总额的展示金额（未分摊）。
     var billAmount: Money { Money(minorUnits: priceMinorUnits, currencyCode: currencyCode) }
 
-    /// 我实际承担的那份。均摊把总额除以人数（余数记到第一个人头上时直接四舍五入），
+    /// 我实际承担的那份。均摊把总额除以人数（整数半进位，见 `Money.evenShare`），
     /// 自定义用填的数字。
     var myAmount: Money {
         guard shareEnabled else { return billAmount }
         switch shareMode {
         case .even:
-            let minor = Int(round(Double(priceMinorUnits) / Double(shareHeadcount)))
-            return Money(minorUnits: minor, currencyCode: currencyCode)
+            return Money(minorUnits: Money.evenShare(totalMinorUnits: priceMinorUnits,
+                                                     headcount: shareHeadcount),
+                         currencyCode: currencyCode)
         case .custom:
             return Money(minorUnits: shareMyMinorUnits, currencyCode: currencyCode)
         }
@@ -251,8 +262,7 @@ final class Subscription {
     /// 其余每人（均摊时）；自定义份额下没有「其余每人」。
     var othersAmount: Money? {
         guard shareEnabled, shareMode == .even else { return nil }
-        let minor = Int(round(Double(priceMinorUnits) / Double(shareHeadcount)))
-        return Money(minorUnits: minor, currencyCode: currencyCode)
+        return myAmount
     }
 
     var cycleTitle: String {

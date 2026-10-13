@@ -1,0 +1,459 @@
+diff --git a/Saury/Views/Components/Motion.swift b/Saury/Views/Components/Motion.swift
+index 618bca1..4ec4527 100644
+--- a/Saury/Views/Components/Motion.swift
++++ b/Saury/Views/Components/Motion.swift
+@@ -1,3 +1,4 @@
++import os
+ import SwiftUI
+ import UIKit
+ 
+@@ -65,6 +66,10 @@ struct AnimatedNumber: View {
+     @State private var startDate = Date.distantPast
+     @State private var running = false
+     @State private var settle = false
++    #if DEBUG
++    /// 只用来打日志的轮次编号：body 不读它，所以不参与渲染。
++    @State private var round = 0
++    #endif
+ 
+     init(value: Double, format: @escaping (Double) -> String = { String(format: "%.2f", $0) },
+          font: Font = SauryTheme.amountFont(size: 40),
+@@ -101,17 +106,37 @@ struct AnimatedNumber: View {
+     }
+ 
+     private func roll(to next: Double) {
++        #if DEBUG
++        var mine = round
++        if Motion.numberProbeEnabled {
++            round += 1
++            mine = round
++            let line = "数字探针 起第\(mine)轮 从\(plain(currentDisplayValue())) 到 \(plain(next))"
++            Motion.probeLogger.log("数字探针 \(line, privacy: .public)")
++        }
++        #endif
+         from = currentDisplayValue()
+         target = next
+         startDate = Date()
+         withAnimation(.easeOut(duration: 0.12)) { settle = true }
+         running = true
+         DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
++            #if DEBUG
++            if Motion.numberProbeEnabled {
++                let shown = plain(self.running ? self.currentDisplayValue() : self.target)
++                let line = "第\(mine)轮收尾回调 当前第\(self.round)轮 屏幕上=\(shown) 真值=\(plain(self.value)) 还在动=\(self.running)"
++                Motion.probeLogger.log("数字探针 \(line, privacy: .public)")
++            }
++            #endif
+             withAnimation(.spring(duration: 0.35, bounce: 0.25)) { settle = false }
+             running = false
+         }
+     }
+ 
++    #if DEBUG
++    private func plain(_ value: Double) -> String { String(format: "%.2f", value) }
++    #endif
++
+     private func currentDisplayValue() -> Double {
+         let x = min(max(Date().timeIntervalSince(startDate) / duration, 0), 1)
+         return from + (target - from) * Motion.spring(x, bounce: bounce)
+@@ -312,3 +337,41 @@ struct AmbientSwing<Content: View>: View {
+             }
+     }
+ }
++
++#if DEBUG
++// MARK: - 对照录用的探针（只存在于基准 worktree 的一次性副本）
++
++extension Motion {
++    static let numberProbeEnabled = ProcessInfo.processInfo.arguments.contains("-saury-number")
++    static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
++}
++
++/// 录屏对齐用的打点：日志是墙上时钟，录屏是录屏器自己的秒数，中间隔了几秒启动耗时。
++/// 关键事件那一帧把状态栏下面那条带子刷白，事后拿白帧把两条时间轴钉在一起。
++@MainActor
++final class ProbeMarker: ObservableObject {
++    static let shared = ProbeMarker()
++    @Published private(set) var flashing = false
++
++    func mark(_ label: String) {
++        Motion.probeLogger.log("打点 \(label, privacy: .public)")
++        flashing = true
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.034) { self.flashing = false }
++    }
++}
++
++struct ProbeMarkerBand: View {
++    @ObservedObject private var marker = ProbeMarker.shared
++
++    var body: some View {
++        if marker.flashing {
++            Rectangle()
++                .fill(Color.white)
++                .frame(height: 18)
++                .padding(.horizontal, 120)
++                .padding(.top, 52)
++                .ignoresSafeArea()
++        }
++    }
++}
++#endif
+diff --git a/Saury/Views/Detail/CalendarAndStats.swift b/Saury/Views/Detail/CalendarAndStats.swift
+index ada6478..93adac4 100644
+--- a/Saury/Views/Detail/CalendarAndStats.swift
++++ b/Saury/Views/Detail/CalendarAndStats.swift
+@@ -1,3 +1,4 @@
++import os
+ import SwiftUI
+ import SwiftData
+ 
+@@ -30,6 +31,9 @@ struct SubscriptionCalendarView: View {
+             .padding(.bottom, 24)
+         }
+         .background(SauryTheme.background)
++        #if DEBUG
++        .task { await runCalendarFlipProbeIfNeeded() }
++        #endif
+         .navigationTitle("订阅日历")
+         .navigationBarTitleDisplayMode(.inline)
+         .toolbar {
+@@ -281,6 +285,59 @@ struct SubscriptionCalendarView: View {
+             month = BillingMath.calendar.date(byAdding: .month, value: delta, to: month) ?? month
+         }
+     }
++
++    #if DEBUG
++    fileprivate static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
++
++    /// 「之前」那一版的对照录屏入口。下面每一句都是从页面上用户真正按到的那段
++    /// 一字未改搬进来的：翻月是 `moveMonth`，切视图是 `modeSwitcher` 里那两句，
++    /// 翻年是全年页左右箭头里的那一句赋值（那一版它既不写方向、也没有 `withAnimation`），
++    /// 点日是 `CalendarMonthGrid` 的 `onSelectDay` 闭包。
++    /// 剧本和「之后」那一版逐帧对齐：8 下翻月 → 切到全年 → 4 下翻年 → 切回月 → 点一天。
++    /// 这段 DEBUG 只存在于基准 worktree 的一次性副本里，不进仓库。
++    private func runCalendarFlipProbeIfNeeded() async {
++        guard ProcessInfo.processInfo.arguments.contains("-saury-months") else { return }
++        try? await Task.sleep(for: .milliseconds(1500))
++        Self.probeLogger.log("日历探针 \("起步 月=\(QJFormat.yearMonth(month)) 视图=\(modeTitle)", privacy: .public)")
++        ProbeMarker.shared.mark("日历 起步 月=\(QJFormat.yearMonth(month)) 视图=\(modeTitle)")
++        for step in 0..<8 {
++            let delta = step < 4 ? 1 : -1
++            let line = "第\(step + 1)下 delta=\(delta) 按下前=\(QJFormat.yearMonth(month)) 方向=\(monthDirection)"
++            Self.probeLogger.log("日历探针 \(line, privacy: .public)")
++            moveMonth(delta)
++            try? await Task.sleep(for: .milliseconds(130))
++        }
++        SelectionHaptics.tick()
++        withAnimation(Motion.slide) { mode = .year }
++        try? await Task.sleep(for: .milliseconds(130))
++        let calendar = BillingMath.calendar
++        for step in 0..<4 {
++            let delta = step % 2 == 0 ? -1 : 1
++            let line = "翻年\(step + 1) delta=\(delta) 按下前=\(String(calendar.component(.year, from: month))) 方向=\(monthDirection)"
++            Self.probeLogger.log("日历探针 \(line, privacy: .public)")
++            month = calendar.date(byAdding: .year, value: delta, to: month) ?? month
++            try? await Task.sleep(for: .milliseconds(130))
++        }
++        SelectionHaptics.tick()
++        withAnimation(Motion.slide) { mode = .month }
++        try? await Task.sleep(for: .milliseconds(1500))
++        let rest = "收尾 月=\(QJFormat.yearMonth(month)) 视图=\(modeTitle) 方向=\(monthDirection) 选中日=\(selectedDayText)"
++        Self.probeLogger.log("日历探针 \(rest, privacy: .public)")
++        ProbeMarker.shared.mark("日历 \(rest)")
++        if let day = stats.chargesByDay(in: month).keys.sorted().first {
++            let picked = "点日 \(QJFormat.shortDate(day)) \(stats.charges(on: day).count) 笔"
++            Self.probeLogger.log("日历探针 \(picked, privacy: .public)")
++            SelectionHaptics.tick()
++            withAnimation(Motion.ui) { selectedDay = day }
++        }
++    }
++
++    private var modeTitle: String { mode == .month ? "月" : "全年" }
++
++    private var selectedDayText: String {
++        selectedDay.map { QJFormat.shortDate($0) } ?? "无"
++    }
++    #endif
+ }
+ 
+ /// 支出分类详情：每个分类的月/年合计和它名下的订阅。
+diff --git a/Saury/Views/Overview/OverviewComponents.swift b/Saury/Views/Overview/OverviewComponents.swift
+index 60dc410..95f1fdf 100644
+--- a/Saury/Views/Overview/OverviewComponents.swift
++++ b/Saury/Views/Overview/OverviewComponents.swift
+@@ -1,3 +1,4 @@
++import os
+ import SwiftUI
+ 
+ /// 即将扣费的卡片堆叠轮播：当前卡可以横向拖走，下一张从后面浮起来归位。
+@@ -28,6 +29,9 @@ struct UpcomingChargeCarousel: View {
+                     }
+                     .contentShape(Rectangle())
+                     .gesture(panGesture(width: proxy.size.width))
++                    #if DEBUG
++                    .task { await runFlingProbeIfNeeded(width: proxy.size.width) }
++                    #endif
+                 }
+                 .frame(height: 128)
+ 
+@@ -65,25 +69,34 @@ struct UpcomingChargeCarousel: View {
+ 
+     private func panGesture(width: CGFloat) -> some Gesture {
+         DragGesture()
+-            .onChanged { value in
+-                if !dragging {
+-                    dragging = true
+-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+-                }
+-                let travel = Double(value.translation.width) / Double(max(width, 1)) * 1.35
+-                position = clampPosition(Double(focused) + travel)
+-            }
+-            .onEnded { value in
+-                dragging = false
+-                let predicted = Double(value.predictedEndTranslation.width)
+-                var target = Double(focused)
+-                if predicted < -60, focused < charges.count - 1 { target = Double(focused + 1) }
+-                if predicted > 60, focused > 0 { target = Double(focused - 1) }
+-                if target != position { SelectionHaptics.tick() }
+-                withAnimation(Motion.carouselSnap) {
+-                    position = target
+-                }
+-            }
++            .onChanged { value in frameChanged(translation: value.translation.width, width: width) }
++            .onEnded { value in frameEnded(translation: value.translation.width,
++                                           predicted: value.predictedEndTranslation.width,
++                                           width: width) }
++    }
++
++    /// 下面两个方法是原来直接写在 `.onChanged` / `.onEnded` 里的那几句，
++    /// 一字未改搬进来（只把 `value.translation.width` 换成参数），
++    /// 所以对照录屏的探针和用户手指走的确实是同一段代码。
++    private func frameChanged(translation: CGFloat, width: CGFloat) {
++        if !dragging {
++            dragging = true
++            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
++        }
++        let travel = Double(translation) / Double(max(width, 1)) * 1.35
++        position = clampPosition(Double(focused) + travel)
++    }
++
++    private func frameEnded(translation: CGFloat, predicted: CGFloat, width: CGFloat) {
++        dragging = false
++        let predicted = Double(predicted)
++        var target = Double(focused)
++        if predicted < -60, focused < charges.count - 1 { target = Double(focused + 1) }
++        if predicted > 60, focused > 0 { target = Double(focused - 1) }
++        if target != position { SelectionHaptics.tick() }
++        withAnimation(Motion.carouselSnap) {
++            position = target
++        }
+     }
+ 
+     private func clampPosition(_ raw: Double) -> Double {
+@@ -96,9 +109,46 @@ struct UpcomingChargeCarousel: View {
+     }
+ }
+ 
++#if DEBUG
++extension UpcomingChargeCarousel {
++    fileprivate static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
++
++    /// 和「之后」那一版逐字对齐的剧本：四枪来回甩，每枪 8 帧 × 16ms，
++    /// 预测位移 = 位移 × 1.6，松手后 90ms 打下一个。两条带子的输入完全相同。
++    func runFlingProbeIfNeeded(width: CGFloat) async {
++        guard ProcessInfo.processInfo.arguments.contains("-saury-fling") else { return }
++        try? await Task.sleep(for: .milliseconds(1200))
++        ProbeMarker.shared.mark("轮播 start cards=\(charges.count) position=\(plain(position))")
++        for stroke in 0..<4 {
++            let side: CGFloat = stroke % 2 == 0 ? -1 : 1
++            let reach = 150 + CGFloat(stroke) * 45
++            probeLog("down position=\(plain(position)) focused=\(focused)")
++            for frame in 0..<8 {
++                let x = side * reach * CGFloat(frame + 1) / 8
++                frameChanged(translation: x, width: width)
++                probeLog("drag x=\(plain(x)) position=\(plain(position)) focused=\(focused)")
++                try? await Task.sleep(for: .nanoseconds(16_000_000))
++            }
++            let predicted = side * reach * 1.6
++            frameEnded(translation: side * reach, predicted: predicted, width: width)
++            probeLog("up predicted=\(plain(predicted)) position=\(plain(position)) focused=\(focused)")
++            try? await Task.sleep(for: .milliseconds(90))
++        }
++        try? await Task.sleep(for: .milliseconds(1600))
++        ProbeMarker.shared.mark("轮播 rest position=\(plain(position)) focused=\(focused)")
++    }
++
++    fileprivate func probeLog(_ message: String) {
++        Self.probeLogger.log("轮播探针 \(message, privacy: .public)")
++    }
++
++    fileprivate func plain(_ value: Double) -> String { String(format: "%.3f", value) }
++    fileprivate func plain(_ value: CGFloat) -> String { String(format: "%.1f", value) }
++}
++#endif
++
+ struct ChargeCard: View {
+     let item: SubscriptionStats.ScheduledCharge
+-
+     @EnvironmentObject private var preferences: SubPreferences
+ 
+     var body: some View {
+diff --git a/Saury/Views/Overview/OverviewView.swift b/Saury/Views/Overview/OverviewView.swift
+index 15d837e..5f993bb 100644
+--- a/Saury/Views/Overview/OverviewView.swift
++++ b/Saury/Views/Overview/OverviewView.swift
+@@ -1,3 +1,4 @@
++import os
+ import SwiftUI
+ import SwiftData
+ 
+@@ -5,6 +6,9 @@ import SwiftData
+ /// 支出趋势、累计花费、月均/平均每个。面板可在设置里隐藏或排序。
+ struct OverviewView: View {
+     var onSelectTab: (MainTab) -> Void
++    /// 对照录屏用：外层 `NavigationStack` 的那条 path（见 `RootView.overviewPath`）。
++    /// 这一版本页自己的 `path` 没接到栈上，探针只能借外层这条推到日历页。
++    var demoPath: Binding<NavigationPath>? = nil
+ 
+     @Environment(\.modelContext) private var modelContext
+     @EnvironmentObject private var preferences: SubPreferences
+@@ -42,6 +46,11 @@ struct OverviewView: View {
+             .padding(.bottom, 24)
+         }
+         .scrollBounceBehavior(.basedOnSize)
++        #if DEBUG
++        .task { pushCalendarIfRequested() }
++        .task { await runPeriodProbeIfNeeded() }
++        .task { await runChartProbeIfNeeded() }
++        #endif
+         .background(SauryTheme.background)
+         .navigationTitle("")
+         .toolbarBackground(.hidden, for: .navigationBar)
+@@ -357,7 +366,91 @@ struct OverviewView: View {
+ }
+ 
+ /// 月 / 季 / 年 切换胶囊。
++#if DEBUG
++// MARK: - 对照录用的探针（只存在于基准 worktree 的一次性副本，不进仓库）
++
++extension OverviewView {
++    fileprivate static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
++
++    /// 翻月录屏要从日历页开始。这一句走的就是面板标题右边那一下 `onTap`
++    /// （`path.append(Route.calendar)`），和「之后」那一版的 `-saury-tab calendar` 同一条路。
++    func pushCalendarIfRequested() {
++        let arguments = ProcessInfo.processInfo.arguments
++        guard let index = arguments.firstIndex(of: "-saury-tab"),
++              index + 1 < arguments.count,
++              arguments[index + 1] == "calendar" else { return }
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
++            demoPath?.wrappedValue.append(Route.calendar)
++        }
++    }
++
++    /// 剧本和「之后」那一版逐字相同（§8.4 月/季/年、§9.2「数据更新时立即切换统计周期」）：
++    /// 两次快接一次慢接，再来一组 120ms 的连点。
++    func runPeriodProbeIfNeeded() async {
++        guard ProcessInfo.processInfo.arguments.contains("-saury-period") else { return }
++        try? await Task.sleep(for: .milliseconds(1600))
++        ProbeMarker.shared.mark("周期 起步 选中 \(period.title)")
++        let script: [(SubscriptionStats.StatsPeriod, Double)] = [
++            (.quarter, 0.24), (.year, 0.24), (.month, 1.4),
++            (.year, 0.12), (.month, 0.12), (.year, 0.12), (.month, 2.2),
++        ]
++        for (next, gap) in script {
++            let total = stats.periodChargeTotal(for: next)
++            let line = "→ \(next.title) 应落合计 \(String(format: "%.2f", total.majorValue))（切换前选中 \(period.title)）"
++            Self.probeLogger.log("周期探针 \(line, privacy: .public)")
++            SelectionHaptics.tick()
++            withAnimation(Motion.ui) { period = next }
++            try? await Task.sleep(for: .milliseconds(Int(gap * 1000)))
++        }
++        let settled = stats.periodChargeTotal(for: period)
++        let last = "收尾 选中 \(period.title) 真值 \(String(format: "%.2f", settled.majorValue))"
++        ProbeMarker.shared.mark("周期 \(last)")
++    }
++
++    /// 同一份数据换周期、换画法：环形/柱状/折线各自怎么过渡，这段就是被量的那一段。
++    func runChartProbeIfNeeded() async {
++        guard ProcessInfo.processInfo.arguments.contains("-saury-chart") else { return }
++        let orderBefore = preferences.panelOrder
++        let styleBefore = preferences.trendChartStyle
++        try? await Task.sleep(for: .milliseconds(1600))
++        ProbeMarker.shared.mark("图表 起步 面板=\(panelTitles(orderBefore))")
++        withAnimation(Motion.ui) {
++            preferences.panelOrder = [.categoryBreakdown, .trend] + OverviewPanel.allCases.filter {
++                $0 != .categoryBreakdown && $0 != .trend
++            }
++        }
++        try? await Task.sleep(for: .milliseconds(1200))
++        for (next, gap) in [(SubscriptionStats.StatsPeriod.year, 2.2),
++                            (.quarter, 2.2),
++                            (.month, 2.4)] {
++            let slices = stats.categorySlices(preferences: preferences.categories).count
++            Self.probeLogger.log("图表探针 周期→\(next.title, privacy: .public) 分类数=\(slices) 柱数=\(stats.trendBars().count)")
++            SelectionHaptics.tick()
++            withAnimation(Motion.ui) { period = next }
++            try? await Task.sleep(for: .milliseconds(Int(gap * 1000)))
++        }
++        withAnimation(Motion.ui) { preferences.trendChartStyle = .line }
++        Self.probeLogger.log("图表探针 切到折线")
++        try? await Task.sleep(for: .milliseconds(1400))
++        SelectionHaptics.tick()
++        withAnimation(Motion.ui) { period = .quarter }
++        try? await Task.sleep(for: .milliseconds(2200))
++        withAnimation(Motion.ui) { preferences.trendChartStyle = .bars }
++        Self.probeLogger.log("图表探针 切回柱状")
++        try? await Task.sleep(for: .milliseconds(1400))
++        withAnimation(Motion.ui) { preferences.panelOrder = orderBefore }
++        preferences.trendChartStyle = styleBefore
++        ProbeMarker.shared.mark("图表 收尾 偏好已放回 周期=\(period.title)")
++    }
++
++    func panelTitles(_ order: [OverviewPanel]) -> String {
++        order.map { $0.title }.joined(separator: "/")
++    }
++}
++#endif
++
+ struct PeriodToggle: View {
++
+     @Binding var selection: SubscriptionStats.StatsPeriod
+ 
+     @Namespace private var pill
+diff --git a/Saury/Views/RootView.swift b/Saury/Views/RootView.swift
+index 14465bb..f618f00 100644
+--- a/Saury/Views/RootView.swift
++++ b/Saury/Views/RootView.swift
+@@ -26,6 +26,10 @@ struct RootView: View {
+ 
+     @Namespace private var tabPill
+     @State private var selectedTab: MainTab = .overview
++    /// 对照录屏：那一版总览面板的 `path.append(Route.calendar)` 推不动 —— `path` 是总览页
++    /// 自己的 `@State`，`NavigationStack` 却在外层这一层。这里把外层那条 path 借给探针，
++    /// 推的仍然是同一个 `Route.calendar`、同一个 `navigationDestination`。
++    @State private var overviewPath = NavigationPath()
+     @State private var tabDirection = 1
+     @State private var showingAdd = false
+     @State private var addEditing: Subscription?
+@@ -43,6 +47,9 @@ struct RootView: View {
+         // 退场那页会被画在不透明底色下面，滑出去的一半根本看不见，
+         // 看起来就像旧页瞬间消失、中间露出一屏黑。
+         .background { SauryTheme.background.ignoresSafeArea() }
++        #if DEBUG
++        .overlay(alignment: .top) { ProbeMarkerBand() }
++        #endif
+         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+         .tint(Color(hex: preferences.accentHex) ?? .accentColor)
+         .preferredColorScheme(preferences.appearance.colorScheme)
+@@ -204,7 +211,9 @@ struct RootView: View {
+     @ViewBuilder
+     private var pages: some View {
+         if selectedTab == .overview {
+-            NavigationStack { OverviewView(onSelectTab: { select($0, haptic: false) }) }
++            NavigationStack(path: $overviewPath) {
++                OverviewView(onSelectTab: { select($0, haptic: false) }, demoPath: $overviewPath)
++            }
+                 .transition(pageTransition)
+         }
+         if selectedTab == .subscriptions {

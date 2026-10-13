@@ -1,0 +1,41 @@
+PR5f 全量回归的转录摘要（原件 build/verification/pr5/pr5f-suite-final.log 在 .gitignore 的 build/ 里，只在本机）
+取法：python3 数 Test Case '-[…]' passed 行；grep "Executed 430"；下面那行 xcodebuild 命令原样摘自日志。
+
+Test Suite 'All tests' started at 2026-10-13 08:45:10.795.
+Test Suite 'All tests' passed at 2026-10-13 08:45:14.961.
+
+通过用例合计：430；失败行（]' failed）：0
+
+按类（通过数）：
+  SauryTests.AddFormRulesTests                          25
+  SauryTests.BackupV2Tests                              23
+  SauryTests.BillingMathTests                           10
+  SauryTests.IconPickerTests                            52
+  SauryTests.ImportConflictTests                        26
+  SauryTests.ImportParserTests                          21
+  SauryTests.LedgerPersistenceTests                      1
+  SauryTests.MigrationTests                              4
+  SauryTests.MoneyTests                                 11
+  SauryTests.PreferencesPublishingTests                 21
+  SauryTests.RealStoreMigrationTests                    11
+  SauryTests.ReminderPlanTests                          35
+  SauryTests.ReminderSchedulerTests                     16
+  SauryTests.SheetRouterTests                           12
+  SauryTests.StoreFailureClassificationTests             9
+  SauryTests.StoreIntegrityTests                         8
+  SauryTests.StoreRecoveryTests                          7
+  SauryTests.SubscriptionActionsTests                   11
+  SauryTests.SubscriptionImportExportTests               6
+  SauryTests.SubscriptionLedgerTests                    18
+  SauryTests.SubscriptionQueryTests                     18
+  SauryTests.SubscriptionRepositoryTests                35
+  SauryTests.SubscriptionStatsTestsSuite                10
+  SauryTests.SyncCoordinatorTests                       18
+  SauryTests.SyncMergeTests                             20
+  SauryTests.SyncPhaseChainTests                         2
+
+	 Executed 430 tests, with 0 failures (0 unexpected) in 4.038 (4.165) seconds
+	 Executed 430 tests, with 0 failures (0 unexpected) in 4.038 (4.166) seconds
+
+命令：
+  xcodebuild test -project ./Saury.xcodeproj -scheme Saury -destination "platform=iOS Simulator,id=D13B9A45-CEDF-4479-BA64-25C1D38750A8" -parallel-testing-enabled NO -maximum-parallel-testing-workers 1

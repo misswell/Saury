@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 三页引导：提醒、集中管理、花销与隐私。最后一页点「开始使用」进主界面。
+/// 三页引导：集中管理、提醒、花销与隐私。最后一页点「开始使用」进主界面。
+/// 页序对齐竞品（矩阵 EON-061）：第 1 页是收集，提醒在第 2 页。
 struct OnboardingView: View {
     let onFinish: () -> Void
 
@@ -26,8 +27,8 @@ struct OnboardingView: View {
                 .animation(Motion.ui, value: page)
 
                 TabView(selection: $page) {
-                    reminderPage.tag(0)
-                    collectionPage.tag(1)
+                    collectionPage.tag(0)
+                    reminderPage.tag(1)
                     privacyPage.tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
@@ -87,9 +88,47 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .staged(2)
+            notificationMock
+                .staged(3, edge: .bottom)
+                .padding(.top, 2)
             Spacer()
         }
         .padding(.horizontal, 32)
+    }
+
+    /// 引导页里那条「假通知」。正文不另写广告词，调的是真实提醒用的同一个渲染函数
+    /// （`ReminderPlan.body`）：引导里演的那一句，就是将来通知中心里出现的那一句。
+    /// 竞品引导页第 2 页同样是这张横幅（矩阵 EON-061）。
+    private var notificationMock: some View {
+        let sample = Subscription(name: "视频会员", priceMinorUnits: 2_500,
+                                  currencyCode: "CNY", cycle: .monthly)
+        let chargeDate = BillingMath.calendar.date(byAdding: .day, value: 3,
+                                                   to: BillingMath.calendar.startOfDay(for: Date()))
+            ?? Date()
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "play.tv.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color(hex: "#FF375F") ?? .accentColor))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("订阅即将扣费")
+                    .font(.footnote.weight(.semibold))
+                Text(ReminderPlan.body(for: sample, chargeDate: chargeDate, fireAt: Date()))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            Text("3 天后")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(.primary.opacity(0.06)))
     }
 
     private var collectionPage: some View {

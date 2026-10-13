@@ -2,7 +2,8 @@ import Foundation
 import SwiftData
 
 /// 订阅身上的事件：扣费、调价、暂停、恢复、跳过、备注。
-/// 时间轴页直接按时间倒序展示；「总花费」从已扣费事件里算。
+/// 时间轴页直接按时间倒序展示；「累计支付」里它是**已登记支付**那一半，
+/// 另一半（周期推算出来的过去扣费）由 `SubscriptionLedger` 补，两边分开报。
 enum SubscriptionEventType: String, CaseIterable, Codable {
     case charged
     case priceChanged

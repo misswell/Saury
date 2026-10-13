@@ -80,56 +80,172 @@ struct ExternalDraft: Codable, Identifiable {
 ///
 /// 分享扩展是独立 target，只能靠这份 JSON 传话，所以它那边手写了一份同样的形状，
 /// 见 `SauryShare/ShareViewController.swift`。两边新增 `ExternalPayload` 分支必须同步改。
+///
+/// 读的时候一条一条解：扩展那边可能比主 App 先更新、写下主 App 看不懂的 `kind`。
+/// 整份一起解的话那一条会把整条队列判成解不开 —— 用户后头分享的每一条都进不来，
+/// 这就是「不丢失」的反面。看不懂的留在队里，看得懂的照旧按顺序消费。
 enum ExternalInputStore {
     static let suiteName = "group.com.guofeng.saury"
     static let key = "qijian.externalDrafts"
     /// 只有一个草稿位的老格式：读出来补进队列，不让它凭空消失。
     private static let legacyKey = "qijian.externalItemDraft"
 
-    private static var defaults: UserDefaults { UserDefaults(suiteName: suiteName) ?? .standard }
+    /// 队列存在哪儿。生产就是 App Group 那份 defaults；测试把它换成一个独立 suite，
+    /// 免得跑一次单测就在真机上留一条待办。
+    nonisolated(unsafe) static var storage: UserDefaults =
+        UserDefaults(suiteName: suiteName) ?? .standard
 
-    static func store(_ payload: ExternalPayload, source: String) {
-        var drafts = queue()
-        drafts.append(ExternalDraft(id: UUID(), createdAt: Date(), source: source, payload: payload))
-        save(drafts)
+    /// 队列里的一项。看得懂的就是草稿，看不懂的留着原始字节，等下一版认识它的人来读。
+    private enum Item {
+        case known(ExternalDraft)
+        case unreadable(Data)
     }
 
-    /// 取最老的一条（方案 §58 的 FIFO）。剩下的留在队列里，等下一次回到前台再处理。
+    static func store(_ payload: ExternalPayload, source: String) {
+        var items = read()
+        items.append(.known(ExternalDraft(id: UUID(), createdAt: Date(), source: source, payload: payload)))
+        save(items)
+    }
+
+    /// 取最早的那一条看得懂的（方案 §58 的 FIFO）。
+    /// 剩下的 —— 包括看不懂的那些 —— 原样留在队列里。
     @MainActor
     static func consume() -> ExternalDraft? {
-        var drafts = queue()
-        guard !drafts.isEmpty else { return nil }
-        let draft = drafts.removeFirst()
-        save(drafts)
+        var items = read()
+        guard let index = items.firstIndex(where: { if case .known = $0 { return true }; return false })
+        else { return nil }
+        guard case .known(let draft) = items[index] else { return nil }
+        items.remove(at: index)
+        save(items)
         return draft
     }
 
     static func queue() -> [ExternalDraft] {
-        guard let data = defaults.data(forKey: key) else { return legacyDrafts() }
-        do {
-            return try JSONDecoder().decode([ExternalDraft].self, from: data)
-        } catch {
-            // 解不开就是解不开，宁可留下原来那份，也不能顺手把它清空。
-            SauryLog.saveFailed("读取外部输入队列", error)
-            return []
+        read().compactMap { item in
+            if case .known(let draft) = item { return draft }
+            return nil
         }
     }
 
-    private static func save(_ drafts: [ExternalDraft]) {
-        defaults.removeObject(forKey: legacyKey)
-        guard let data = try? JSONEncoder().encode(drafts) else { return }
-        defaults.set(data, forKey: key)
+    /// 队列里有几条是这一版看不懂的。页面用它说明「有一条带不过来」，
+    /// 而不是让用户以为分享没生效。
+    static func unreadableCount() -> Int {
+        read().filter { if case .unreadable = $0 { return true }; return false }.count
     }
 
-    private static func legacyDrafts() -> [ExternalDraft] {
-        guard let data = defaults.data(forKey: legacyKey) else { return [] }
+    private static func read() -> [Item] {
+        guard let data = storage.data(forKey: key) else { return legacyItems() }
+        guard let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            // 整份都不是数组了：留着不动，只报告。写一次就是把用户的东西抹掉一次。
+            SauryLog.saveFailed("读取外部输入队列", JSONError.notAnArray)
+            return []
+        }
+        return objects.compactMap { object in
+            guard let encoded = try? JSONSerialization.data(withJSONObject: object) else {
+                SauryLog.saveFailed("外部输入里有一条转不回 JSON", JSONError.notAnArray)
+                return nil
+            }
+            guard let draft = try? JSONDecoder().decode(ExternalDraft.self, from: encoded) else {
+                return .unreadable(encoded)
+            }
+            return .known(draft)
+        }
+    }
+
+    private static func save(_ items: [Item]) {
+        storage.removeObject(forKey: legacyKey)
+        let objects: [[String: Any]] = items.compactMap { item in
+            switch item {
+            case .known(let draft):
+                guard let encoded = try? JSONEncoder().encode(draft),
+                      let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+                else { return nil }
+                return object
+            case .unreadable(let data):
+                return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: objects) else { return }
+        storage.set(data, forKey: key)
+    }
+
+    /// 老格式那一条每次读都照原样递出来，**不在读的时候删**。
+    /// 只看一眼就把老草稿抹掉的话，用户那一条再也不会进来 —— 「不丢失」的反面。
+    /// 真正把它换掉的是 `save`：队列第一次落盘时老那一格才被清走。
+    private static func legacyItems() -> [Item] {
+        guard let data = storage.data(forKey: legacyKey) else { return [] }
         do {
             let draft = try JSONDecoder().decode(ExternalItemDraft.self, from: data)
-            defaults.removeObject(forKey: legacyKey)
-            return [ExternalDraft(id: UUID(), createdAt: Date(), source: "外部输入", payload: .fields(draft))]
+            return [.known(ExternalDraft(id: UUID(), createdAt: .distantPast, source: "外部输入",
+                                         payload: .fields(draft)))]
         } catch {
             SauryLog.saveFailed("迁移旧的外部输入", error)
             return []
         }
+    }
+
+    private enum JSONError: LocalizedError {
+        case notAnArray
+        var errorDescription: String? { "队列里存的不是外部输入数组那个形状" }
+    }
+}
+
+/// 队列里的一条外部输入 → 添加表单的初值。
+///
+/// 这一层是纯函数（只有图片那一支把「搬文件」注入进来），所以 §10.5 那几条
+/// —— 文字取第一行当名字、链接把来源留下、图片不许静默丢 ——
+/// 都能不问 UI 直接问出来。
+enum ExternalIntake {
+    enum Problem: LocalizedError, Equatable {
+        /// 这一条压根没有能当名字的东西。丢掉它必须说，不能当没收到。
+        case nothingUsable(source: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .nothingUsable(let source): return "\(source)递过来的内容里没有能当名字的文字。"
+            }
+        }
+    }
+
+    static func prefill(for draft: ExternalDraft,
+                        promoting: (String) throws -> String = { try SharedImageIngest.promote($0) }) throws -> AddPrefill {
+        switch draft.payload {
+        case .text(let text):
+            // 第一行有内容的当名字：分享过来的文字经常顶着一个空行，
+            // 照字面只认第一行的话那条就会被判成「没有能用的」，用户白分享一次。
+            let lines = nonEmptyLines(of: text)
+            guard let name = lines.first else { throw Problem.nothingUsable(source: draft.source) }
+            // 剩下的行留在备注里。用户给的东西不能读一行就扔掉剩下的。
+            let rest = lines.dropFirst().joined(separator: "\n")
+            return AddPrefill(name: name, note: rest.isEmpty ? nil : rest)
+
+        case .url(let string):
+            // 名字取域名，整条链接落在备注里 —— 订阅这一层没有独立的来源字段，
+            // 说「记在来源里」而哪儿都不写，就是 §10.5 讲的「静默丢弃」。
+            let name = host(of: string)
+            return AddPrefill(name: name.isEmpty ? string : name, note: string)
+
+        case .fields(let fields):
+            // 只取名字和来源。老「到期物品」那套价格 / 保质期 / 周期不能顺手变成订阅的默认值。
+            let name = fields.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard name.isEmpty == false else { throw Problem.nothingUsable(source: draft.source) }
+            let source = fields.sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return AddPrefill(name: name, note: (source?.isEmpty ?? true) ? nil : source)
+
+        case .image(let fileName):
+            // 搬不进图标库就抛出去：一张图被悄悄扔掉，比弹一条错误难查得多。
+            return AddPrefill(iconImageFile: try promoting(fileName))
+        }
+    }
+
+    private static func nonEmptyLines(of text: String) -> [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+    }
+
+    private static func host(of string: String) -> String {
+        guard let host = URL(string: string)?.host?.lowercased() else { return "" }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }

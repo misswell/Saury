@@ -1,14 +1,58 @@
 import SwiftUI
+import os
+
+/// 手势的一帧输入。真的 `DragGesture.Value` 和录屏探针都换算成这一个结构再喂给视图，
+/// 于是「录到的那一段」和「用户手指走的那一段」是同一段代码，不是两条通路。
+struct CarouselGestureFrame {
+    /// 相对起手的横向位移（点）。
+    var translationPixelsX: CGFloat
+    /// 预测终点相对当前点的额外位移（点）：松手那一帧才有意义。
+    var predictedExtraPixelsX: CGFloat
+    var time: Date
+
+    init(translationPixelsX: CGFloat, predictedExtraPixelsX: CGFloat = 0, time: Date = Date()) {
+        self.translationPixelsX = translationPixelsX
+        self.predictedExtraPixelsX = predictedExtraPixelsX
+        self.time = time
+    }
+
+    init(of value: DragGesture.Value) {
+        self.translationPixelsX = value.translation.width
+        self.predictedExtraPixelsX = 0
+        self.time = value.time
+    }
+
+    init(endedBy value: DragGesture.Value) {
+        self.translationPixelsX = value.translation.width
+        self.predictedExtraPixelsX = value.predictedEndTranslation.width - value.translation.width
+        self.time = value.time
+    }
+}
 
 /// 即将扣费的卡片堆叠轮播：当前卡可以横向拖走，下一张从后面浮起来归位。
-/// 拖拽跟手、松手用弹簧定位，翻页时给一次触感。
+///
+/// 位置由 `CarouselTrack` 逐帧积分出来，屏幕上那一个值就是模型里的值 ——
+/// 所以定位动画进行到一半手指再搭上来，能直接从当前位置接着拖，不用先跳一下（§9.2）。
 struct UpcomingChargeCarousel: View {
     let charges: [SubscriptionStats.ScheduledCharge]
     var onSelect: (SubscriptionStats.ScheduledCharge) -> Void
 
     @EnvironmentObject private var preferences: SubPreferences
-    @State private var position = 0.0
+    /// 减少动态效果时不再弹：位移取消，落点判断一条不少（§9.4）。
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var track = CarouselTrack(pageCount: 0)
+    /// 当前看的是哪一张。数据换了一批之后按它重算页码，而不是攥着旧下标（§8.1）。
+    @State private var focusedID: String?
     @State private var dragging = false
+    @State private var lastTick = Date()
+    #if DEBUG
+    /// 录屏探针（`-saury-fling`）在跑：只有它在跑的时候才逐帧打点。
+    @State private var probing = false
+    private static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+    #endif
+
+    private var ids: [String] { charges.map(\.id) }
 
     var body: some View {
         if charges.isEmpty {
@@ -20,14 +64,15 @@ struct UpcomingChargeCarousel: View {
         } else {
             VStack(spacing: 10) {
                 GeometryReader { proxy in
-                    ZStack {
-                        ForEach(Array(charges.enumerated()), id: \.element.id) { index, charge in
-                            cardLayer(charge, depth: Double(index) - position, width: proxy.size.width)
-                                .onTapGesture { onSelect(charge) }
-                        }
+                    TimelineView(.animation(minimumInterval: nil, paused: !track.isSettling)) { timeline in
+                        stack(width: proxy.size.width)
+                            .onChange(of: timeline.date) { _, now in
+                                guard track.isSettling else { lastTick = now; return }
+                                track.advance(dt: now.timeIntervalSince(lastTick))
+                                lastTick = now
+                            }
                     }
-                    .contentShape(Rectangle())
-                    .gesture(panGesture(width: proxy.size.width))
+                    .task { await runFlingProbeIfNeeded(width: proxy.size.width) }
                 }
                 .frame(height: 128)
 
@@ -35,18 +80,32 @@ struct UpcomingChargeCarousel: View {
                     HStack(spacing: 5) {
                         ForEach(charges.indices, id: \.self) { index in
                             Capsule()
-                                .fill(index == focused ? Color.primary.opacity(0.7) : Color.primary.opacity(0.18))
-                                .frame(width: index == focused ? 14 : 5, height: 5)
+                                .fill(index == track.focusedPage
+                                      ? Color.primary.opacity(0.7) : Color.primary.opacity(0.18))
+                                .frame(width: index == track.focusedPage ? 14 : 5, height: 5)
                         }
                     }
-                    .animation(Motion.ui, value: focused)
+                    .animation(Motion.ui, value: track.focusedPage)
                 }
             }
+            .onAppear(perform: realign)
+            .onChange(of: ids) { _, _ in realign() }
+            .onChange(of: reduceMotion) { _, off in track.animatesSettle = !off }
         }
     }
 
-    private var focused: Int {
-        min(max(Int(position.rounded()), 0), charges.count - 1)
+    @ViewBuilder
+    private func stack(width: CGFloat) -> some View {
+        ZStack {
+            ForEach(Array(charges.enumerated()), id: \.element.id) { index, charge in
+                cardLayer(charge, depth: Double(index) - track.position, width: width)
+                    .onTapGesture { onSelect(charge) }
+            }
+        }
+        .contentShape(Rectangle())
+        // minimumDistance 8：一 tap 一 drag 挂在同一层，靠阈值分家。
+        // 阈值留 0 的话轻点一下也会被手势抢走，卡片就再也点不动了。
+        .gesture(panGesture(width: width))
     }
 
     @ViewBuilder
@@ -64,36 +123,98 @@ struct UpcomingChargeCarousel: View {
     }
 
     private func panGesture(width: CGFloat) -> some Gesture {
-        DragGesture()
-            .onChanged { value in
-                if !dragging {
-                    dragging = true
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                }
-                let travel = Double(value.translation.width) / Double(max(width, 1)) * 1.35
-                position = clampPosition(Double(focused) + travel)
-            }
-            .onEnded { value in
-                dragging = false
-                let predicted = Double(value.predictedEndTranslation.width)
-                var target = Double(focused)
-                if predicted < -60, focused < charges.count - 1 { target = Double(focused + 1) }
-                if predicted > 60, focused > 0 { target = Double(focused - 1) }
-                if target != position { SelectionHaptics.tick() }
-                withAnimation(Motion.carouselSnap) {
-                    position = target
-                }
-            }
+        DragGesture(minimumDistance: 8)
+            .onChanged { frameChanged(CarouselGestureFrame(of: $0), width: width) }
+            .onEnded { frameEnded(CarouselGestureFrame(endedBy: $0), width: width) }
     }
 
-    private func clampPosition(_ raw: Double) -> Double {
-        guard charges.count > 1 else { return 0 }
-        let last = Double(charges.count - 1)
-        // 橡皮筋：拖过界只露出一点缝隙，松手弹回。
-        if raw < 0 { return raw * 0.35 }
-        if raw > last { return last + (raw - last) * 0.35 }
-        return raw
+    /// 起手与跟手。手指那一帧和录屏探针那一帧进的是同一个方法，
+    /// 录到的就是用户会看到的那一段代码。
+    private func frameChanged(_ frame: CarouselGestureFrame, width: CGFloat) {
+        if !dragging {
+            dragging = true
+            track.animatesSettle = !reduceMotion
+            track.beginDrag(now: frame.time)
+            lastTick = Date()
+            probeLog("down position=\(plain(track.position)) anchor=\(plain(track.anchor))")
+        }
+        // 每一帧都只往起手那一格上加位移；`focused` 会跳，anchor 不会。
+        let crossed = track.drag(translationInPages: CarouselTrack.pages(fromPixelsX: frame.translationPixelsX,
+                                                                        width: width),
+                                 now: frame.time)
+        if crossed != nil { SelectionHaptics.tick() }
+        #if DEBUG
+        if probing { probeLog("drag x=\(plain(frame.translationPixelsX)) position=\(plain(track.position)) page=\(track.focusedPage)") }
+        #endif
     }
+
+    private func frameEnded(_ frame: CarouselGestureFrame, width: CGFloat) {
+        dragging = false
+        let extra = CarouselTrack.pages(fromPixelsX: frame.predictedExtraPixelsX, width: width)
+        let goal = track.release(predictedExtraPages: extra)
+        lastTick = Date()
+        // 手指跨过的每一格已经响过一次了；这里只在「落点反悔」时补一下。
+        if goal != Double(track.focusedPage) { SelectionHaptics.tick() }
+        probeLog("up goal=\(plain(goal)) position=\(plain(track.position)) page=\(track.focusedPage)")
+    }
+
+    private func probeLog(_ line: String) {
+        #if DEBUG
+        guard probing else { return }
+        Self.probeLogger.log("轮播探针 \(line, privacy: .public)")
+        #endif
+    }
+
+    /// 换数据不改身份：还在的那张卡继续占着屏幕，位置变了就滑过去。
+    private func realign() {
+        if track.pageCount != charges.count { track.resize(pageCount: charges.count) }
+        let anchored = CarouselTrack.reindex(focused: focusedID, after: ids, position: track.position)
+        focusedID = anchored.focused
+        track.reanchor(to: anchored.position, animated: true, whileDragging: dragging)
+        track.animatesSettle = !reduceMotion
+    }
+
+    private func plain(_ value: Double) -> String { String(format: "%.3f", value) }
+    private func plain(_ value: CGFloat) -> String { String(format: "%.1f", Double(value)) }
+
+    #if DEBUG
+    /// 「不仅要测试慢速拖动，还要测试反复快速左右甩动」（任务书 §8.1）。
+    ///
+    /// 这一台机器的命令行没有辅助功能权限，合成不了真手指，所以这里灌的是 `CarouselGestureFrame`
+    /// —— 手势回调把 `DragGesture.Value` 换算成它，探针直接造它，两条路进的是同一个
+    /// `frameChanged` / `frameEnded`。甩与甩之间只歇 90ms，比一轮定位（~440ms）短，
+    /// 于是每一枪都打在上一轮动画中间，这就是 §9.2 的「进行到 50% 时再次触发」。
+    /// 逐帧打点：位置、页码、最后停在半张卡还是一张卡。
+    private func runFlingProbeIfNeeded(width: CGFloat) async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-fling") else { return }
+        probing = true
+        try? await Task.sleep(for: .milliseconds(1200))
+        ProbeMarker.shared.mark("轮播 start cards=\(track.pageCount) position=\(plain(track.position)) "
+                 + "range=\(plain(track.bounds.lowerBound))…\(plain(track.bounds.upperBound)) "
+                 + "减少动态效果=\(reduceMotion)")
+        for stroke in 0..<4 {
+            let side: CGFloat = stroke % 2 == 0 ? -1 : 1
+            let reach = 150 + CGFloat(stroke) * 45
+            for frame in 0..<8 {
+                frameChanged(CarouselGestureFrame(translationPixelsX: side * reach * CGFloat(frame + 1) / 8,
+                                                  predictedExtraPixelsX: side * reach * 0.5),
+                             width: width)
+                try? await Task.sleep(for: .nanoseconds(16_000_000))
+            }
+            frameEnded(CarouselGestureFrame(translationPixelsX: side * reach,
+                                            predictedExtraPixelsX: side * reach * 0.6),
+                       width: width)
+            try? await Task.sleep(for: .milliseconds(90))
+        }
+        // 让弹簧走完再看它停在哪儿：停在两张卡中间就是不合格。
+        try? await Task.sleep(for: .milliseconds(1600))
+        let rest = track.position
+        ProbeMarker.shared.mark("轮播 rest position=\(plain(rest)) page=\(track.focusedPage) settling=\(track.isSettling) "
+                 + "wholePage=\(abs(rest - rest.rounded()) < 0.002) "
+                 + "inside=\(track.bounds.contains(rest))")
+        probing = false
+    }
+    #endif
 }
 
 struct ChargeCard: View {

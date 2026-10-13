@@ -43,13 +43,4 @@ enum DemoDataSeeder {
             )
         ]
     }
-
-    static func seedIfNeeded(in context: ModelContext) {
-        #if DEBUG
-        let existing = (try? context.fetchCount(FetchDescriptor<Subscription>())) ?? 0
-        guard existing == 0, UserDefaults.standard.bool(forKey: "saury.seedDemoForPreview") else { return }
-        sampleSubscriptions().forEach(context.insert)
-        try? context.save()
-        #endif
-    }
 }

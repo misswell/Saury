@@ -1,0 +1,62 @@
+PR7b 备用 App 图标：构建产物 + 模拟器实测
+==========================================
+
+跑法（图标那一格走的是用户那一下点的同一个方法 `AppIconSwitcher.tap(_:)`）：
+
+    xcrun simctl install <UDID> …/Debug-iphonesimulator/Saury.app
+    xcrun simctl launch --terminate-running-process <UDID> com.guofeng.saury \
+        -saury-demo -saury-tab appearance -saury-icon
+
+模拟器只用 AGENTS.md 允许的那一台（iPhone 17e / D13B9A45-CEDF-4479-BA64-25C1D38750A8）。
+截图在 gitignore 的 `build/verification/pr7/`：`icons-01-switcher.png`（三格都在）、
+`icons-05-after-tap.png`（按下去之后）。
+
+三档是真资源，不是三个空白格子
+------------------------------
+
+按当前产物里那三份 1024 图标取左上角一个像素（`ffmpeg crop=1:1:20:20` 直读字节）：
+
+    AppIcon.appiconset       #fefefe   ← 主图标（自动那一格用它）
+    AppIconLight.appiconset  #ffffff   ← 浅色
+    AppIconDark.appiconset   #1d1f29   ← 深色
+
+生成脚本 `scripts/make-app-icon-variants.swift`：从罐头照片上把背景洪泛出来
+（种子在四条边上，容差按局部连续性 + 全局占比两道闸），再按
+`target * pow(ratio, gamma)` 乘性染色，所以金属盖和标签上的字不会被抹平。
+
+构建产物层（`SauryTests/AppIconConfigurationTests.swift` 里三条真断言）
+--------------------------------------------------------------------------
+
+| 断言 | 结果 |
+| --- | --- |
+| 编出来的 Info.plist 里 `CFBundleIcons` / `CFBundleIcons~ipad` 都带着两个备用图标 | ✅ |
+| `UIApplication.shared.supportsAlternateIcons` 为真 | ✅ |
+| 三张预览图 `UIImage(named:)` 在 App 进程里取到 | ✅ |
+
+按下去那一次（模拟器实测，2026-10-13 15:5x）
+---------------------------------------------
+
+当前是「深色」，探针按的是「浅色」。系统返回错误
+（`NSPOSIXErrorDomain Code=5` / 「未能完成该操作。资源暂时不可用」），页面上的表现：
+
+- 对勾和描边**还留在深色那一格**，标题栏右侧也还写着「深色」 —— 没有跟着手指走；
+- 下方红色一行带感叹号三角符号：「系统没接受这次切换：未能完成该操作。资源暂时不可用」；
+- 也就是说 §10.3 要的那一条成立：**系统返回错误时 UI 不显示假成功状态**。
+
+同一轮里顺手改掉的两处话术（都是「话说了但没验过」）：
+
+- 外观页那一段重复说明删掉了（设置页 section footer 和 `AppIconSwitcher` 自己那份
+  在说同一件事，且两份说法不一致）；
+- 「切换时系统会弹一下确认提示」这句删了 —— 这一版 iOS 换图标是静默的，
+  而这一台机器上系统压根没接受，那句话从来没被验证过。换成实际行为：
+  「选完以系统记下的那一个为准，系统没接受会在这下面说出来」。
+
+没验到的（不写成已过）
+----------------------
+
+- **三档切换真的生效**：模拟器上 `setAlternateIconName` 就是会失败，
+  所以「桌面图标真的换了」这一条只有真机能验，记在外部前置条件里。
+  单测那边 (`testSystemEitherSwitchesOrLeavesTheNameUntouched`) 断的是环境无关的不变量：
+  要么换成功、要么名字不动，不允许「报错但名字变了还不说」。
+- 这台开发机的模拟器现在停在 `AppIconDark`（探针留下的），
+  在这台机器上换不回来 —— 同上，属于模拟器限制，不影响产物。

@@ -1,19 +1,20 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import os
 
 /// 新增 / 编辑订阅。上半是跟图标同色的 hero 区（图标、名称、金额、币种周期），
 /// 下半是分组表单。保存不弹提示，直接收。
 struct AddSubscriptionView: View {
     var editing: Subscription?
-    var prefillName: String = ""
+    /// 外部入口（快捷指令 / 分享扩展）带进来的初值。编辑态不看这一份。
+    var prefill = AddPrefill.empty
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var preferences: SubPreferences
-    @FocusState private var focusedField: Field?
-
-    enum Field { case name, price, plan, note, share }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var focusedField: FormField?
 
     // MARK: - 表单状态
 
@@ -28,6 +29,7 @@ struct AddSubscriptionView: View {
     @State private var startDate = Date()
     @State private var endDateEnabled = false
     @State private var endDate = Date().addingTimeInterval(365 * 86400)
+    @State private var remindersEnabled = true
     @State private var reminderDays = 3
     @State private var shareEnabled = false
     @State private var shareHeadcount = 2
@@ -41,87 +43,207 @@ struct AddSubscriptionView: View {
     @State private var iconColorHex: String? = nil
     @State private var colorHexes: [String] = []
 
-    @State private var showingIconPicker = false
-    @State private var showingCurrencyPicker = false
-    @State private var showingPeriodPicker = false
-    @State private var showingPaymentPicker = false
+    /// 表单这一层的四张弹层：一次只认一张。
+    ///
+    /// 以前是四个 `Bool` 各挂一张 `.sheet`，可同一层 SwiftUI 只认一张：
+    /// 币种那页刚收起、周期那一下点下去就是「点了没反应」（任务书 §6.3、§7.1）。
+    /// 收成一条之后，四张里最多存在一张，切张必然走完上一张的退场。
+    private enum Layer: Identifiable {
+        case icon, currency, cycle, payment
+
+        var id: Self { self }
+    }
+
+    @State private var layer: Layer?
     @State private var showingStartCalendar = false
+
+    /// 「有没有没保存的改动」只跟打开时定下的锚比，不猜用户改了哪儿。
+    @State private var changes = UnsavedChangesTracker()
+    /// 关掉分摊只是不再计入，不该顺手抹掉原来填的份额：原值留在这儿兜底。
+    @State private var loadedShareMyMinorUnits = 0
+    /// 按过一次保存之后，空着的必填项才开口；平时不碎碎念。
+    @State private var submitTapped = false
+    @State private var showingDiscard = false
+    /// 丢弃要等确认条自己收完：在它的退场动画里直接 dismiss，这一下会被系统整段吞掉
+    /// —— 和 §6.3 那种「弹窗还在收、下一点已落空」是同一类坑。
+    @State private var discardWhenDialogCloses = false
 
     @State private var heroPop = false
 
+    /// 这次表单对应的订阅身份：新增时生成一个、编辑时沿用原 id。
+    /// 保存走 upsert，所以连点两次「保存」写的还是同一行（任务书 §2.3）。
+    @State private var newDraftID = UUID()
+    @State private var isSaving = false
+    @State private var feedback: WriteFeedback?
+
+    private var draftID: UUID { editing?.id ?? newDraftID }
+
     private var isEditing: Bool { editing != nil }
+
+    private var repository: SubscriptionRepository { SubscriptionRepository(context: modelContext) }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
-                    hero
-                        .staged(0, edge: .top)
-                    colorSection
-                        .staged(1)
-                    basicSection
-                        .staged(2)
-                    reminderSection
-                        .staged(3)
-                    shareSection
-                        .staged(4)
-                    paymentSection
-                        .staged(5)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 12) {
+                        hero
+                            .staged(0, edge: .top)
+                        colorSection
+                            .staged(1)
+                        basicSection
+                            .staged(2)
+                        reminderSection
+                            .staged(3)
+                        shareSection
+                            .staged(4)
+                        paymentSection
+                            .staged(5)
+                    }
+                    .padding(.horizontal, SauryTheme.screen)
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal, SauryTheme.screen)
-                .padding(.bottom, 30)
+                .scrollDismissesKeyboard(.interactively)
+                // 换格时把那一格送到中间：数字键盘没有回车，光靠自动滚动容易停在半格上。
+                .onChange(of: focusedField) { _, field in
+                    guard let field else { return }
+                    withAnimation(Motion.ui) { proxy.scrollTo(field, anchor: .center) }
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
             .background(SauryTheme.background)
             .navigationTitle(isEditing ? "编辑订阅" : "新增订阅")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("取消") { dismiss() }
+                    Button("取消") { cancel() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("保存") { save() }
-                        .fontWeight(.bold)
-                        .foregroundStyle(canSave ? Color(hex: preferences.accentHex) ?? .accentColor : Color.secondary)
-                        .scaleEffect(canSave ? 1 : 0.94)
-                        .animation(Motion.ui, value: canSave)
-                        .disabled(!canSave)
+                    Button(action: submit) {
+                        if isSaving {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("保存")
+                        }
+                    }
+                    .fontWeight(.bold)
+                    .foregroundStyle(canSave ? Color(hex: preferences.accentHex) ?? .accentColor : Color.secondary)
+                    .scaleEffect(canSave ? 1 : 0.94)
+                    .animation(Motion.ui, value: canSave)
+                    .animation(Motion.ui, value: isSaving)
+                    // 灰着但可以点：点下去要能问出「到底差在哪」，不是给一个按不动的死按钮。
+                    .accessibilityLabel(isSaving ? "正在保存" : "保存")
+                }
+                ToolbarItem(placement: .keyboard) {
+                    keyboardBar
                 }
             }
-            .sheet(isPresented: $showingIconPicker) {
-                IconPickerSheet(
-                    symbol: $iconSymbol,
-                    imageFile: $iconImageFile,
-                    colorHex: $iconColorHex
-                )
-                .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showingCurrencyPicker) {
-                CurrencyPickerSheet(selection: $currencyCode)
-                    .presentationDetents([.large])
+            .sheet(item: $layer) { layer in
+                switch layer {
+                case .icon:
+                    IconPickerSheet(
+                        symbol: $iconSymbol,
+                        imageFile: $iconImageFile,
+                        colorHex: $iconColorHex
+                    )
                     .presentationDragIndicator(.visible)
+                case .currency:
+                    CurrencyPickerSheet(selection: $currencyCode)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                case .cycle:
+                    CyclePickerSheet(cycle: $cycle, customMonths: $customMonths)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                case .payment:
+                    PaymentQuickPicker(selection: $paymentMethod)
+                        .presentationDetents([.medium])
+                        .presentationDragIndicator(.visible)
+                }
             }
-            .sheet(isPresented: $showingPeriodPicker) {
-                CyclePickerSheet(cycle: $cycle, customMonths: $customMonths)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
+            // 用 alert 而不是 confirmationDialog：后者在表单里会贴着触发它的控件
+            // 弹成小气泡，键盘还撑着的时候「继续填写」会被压到看不见，
+            // 等于把两个选项变成了一个只能选丢弃的死局。
+            .alert(discardTitle, isPresented: $showingDiscard) {
+                Button("丢弃", role: .destructive) { discardWhenDialogCloses = true }
+                Button("继续填写", role: .cancel) { }
+            } message: {
+                Text(discardMessage)
             }
-            .sheet(isPresented: $showingPaymentPicker) {
-                PaymentQuickPicker(selection: $paymentMethod)
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
+            .onChange(of: showingDiscard) { _, closed in
+                guard closed == false, discardWhenDialogCloses else { return }
+                discardWhenDialogCloses = false
+                dismiss()
             }
         }
-        .interactiveDismissDisabled(focusedField != nil)
+        // 有没保存的改动时不让下滑手势直接收掉：不然「取消」有确认、下滑却静默丢，
+        // 同一个页面上两套退出规则（任务书 §7.1 第 10 条）。
+        .interactiveDismissDisabled(hasUnsavedChanges)
         .onAppear(perform: loadInitial)
+        .writeFeedback($feedback)
         #if DEBUG
-        .task { await runQAOpsIfNeeded() }
+        .task {
+            await runQAOpsIfNeeded()
+            await runFormProbeIfNeeded()
+            openIconLayerForProbeIfNeeded()
+            await runHeroProbeIfNeeded()
+        }
         #endif
+    }
+
+    /// 键盘上方那条走格子的工具条。数字键盘没有回车，缺了它就出不去。
+    private var keyboardBar: some View {
+        let current = focusedField
+        let canGoBack = current.flatMap { chain.previous(of: $0) } != nil
+        let canGoForward = current.flatMap { chain.next(of: $0) } != nil
+
+        return HStack(spacing: 16) {
+            Button(action: { moveFocus(-1) }) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 13, weight: .bold))
+            }
+            .disabled(!canGoBack)
+            .accessibilityLabel("上一项")
+
+            Button(action: { moveFocus(1) }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .bold))
+            }
+            .disabled(!canGoForward)
+            .accessibilityLabel("下一项")
+
+            Text(current.flatMap { chain.position(of: $0) } ?? "填完点保存")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+                .animation(Motion.ui, value: current)
+
+            Spacer()
+
+            Button("完成") { focusedField = nil }
+                .fontWeight(.semibold)
+        }
+    }
+
+    private var discardTitle: String {
+        isEditing ? "还没保存，丢弃这些修改？" : "还没保存，丢掉这次填的内容？"
+    }
+
+    private var discardMessage: String {
+        isEditing
+            ? "改动还没存，离开就恢复成原来的样子。"
+            : "关掉之后这次填的不会留下记录。"
+    }
+
+    private func moveFocus(_ step: Int) {
+        guard let current = focusedField else { return }
+        let target = step < 0 ? chain.previous(of: current) : chain.next(of: current)
+        withAnimation(Motion.ui) { focusedField = target }
     }
 
     #if DEBUG
     /// 模拟器操作验证用（`-saury-ops`）。命令里没有 Accessibility 权限，合成不了真实点击，
-    /// 所以让表单自己填一次用户会填的字段，再按真的保存按钮走 `save()`。
+    /// 所以让表单自己填一次用户会填的字段，再按真的保存按钮走 `submit()`。
     /// 新增和编辑共用一个入口，靠 `editing` 分支；结论要从数据库和截图外部核对，这里不算数。
     private func runQAOpsIfNeeded() async {
         guard ProcessInfo.processInfo.arguments.contains("-saury-ops") else { return }
@@ -138,13 +260,142 @@ struct AddSubscriptionView: View {
             cycle = .monthly
             reminderDays = 3
         }
-        save()
+        submit()
+        // 新增那一遍连按两次：真实的 `submit()` 走两遍，对外的草稿 id 却没变，
+        // 所以库里必须还是一行。第二行要是冒出来，数据库那边立刻能看见。
+        if editing == nil { submit() }
     }
+
+    /// 表单与键盘剧本（`-saury-form`，任务书 §7.1）。
+    ///
+    /// 这台机器的命令行没有辅助功能权限，按不动键盘上方那三个按钮，所以这里按的是
+    /// 那个按钮走的**同一句** `moveFocus`／`submit`／`cancel` —— 不是另搭一条演示通路。
+    /// 每步先打一行时间戳：截图一张要 1.5 秒左右，靠秒数猜哪帧对哪步一定会猜错。
+    private func runFormProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-form") else { return }
+        let steps: [(Double, String, () -> Void)] = [
+            (1.2, "表单打开：焦点应落在名称，键盘已经起来", { }),
+            (3.5, "下一项 → 金额：数字键盘，上方工具条该在", { moveFocus(1) }),
+            (6.0, "金额填 12.3、币种切到日元：位数说不通要指着金额说", {
+                priceText = "12.3"
+                currencyCode = "JPY"
+            }),
+            (8.5, "按下保存：不许关页，名称和金额各说一句", { submit() }),
+            (11.0, "修好这两处：名称填上、币种切回人民币", {
+                name = "键盘验证"
+                currencyCode = "CNY"
+            }),
+            (13.0, "展开分摊选自定义，份额 99 比总额还大", {
+                shareEnabled = true
+                shareMode = .custom
+                shareMyText = "99"
+            }),
+            (15.5, "下一项 → 套餐：链子 3/5", { moveFocus(1) }),
+            (17.5, "下一项 → 我的份额：链子 4/5，藏起来的那格不算", { moveFocus(1) }),
+            (19.5, "结束日期开到比开始还早：那一行该说话", {
+                endDateEnabled = true
+                endDate = BillingMath.calendar.date(byAdding: .day, value: -3, to: startDate)!
+            }),
+            (22.0, "再按一次保存：日期这条拦住，页还不关", { submit() }),
+            (24.5, "点取消：填过的表单该问一次丢弃", { cancel() })
+        ]
+        // 每步的秒数是「从表单出现算起」的绝对时刻：逐步累加会越跑越晚，
+        // 截图和日志就对不上了。
+        let started = Date()
+        for (offset, label, action) in steps {
+            let wait = offset - Date().timeIntervalSince(started)
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            probe(label)
+            action()
+        }
+    }
+
+    private static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+
+    private func probe(_ step: String) {
+        Self.probeLogger.log("表单探针 \(step, privacy: .public)")
+    }
+
+    /// 图标剧本（`-saury-icon`）要从表单进「换图标」那一层。命令行的辅助通道够不到那张
+    /// sheet，只能由表单自己把层打开，之后 `IconPickerSheet` 接手。
+    /// 这 1 秒只属于截图探针：表单刚挂上去那一帧开第二层，有时会被系统整段吃掉；
+    /// 用户走的入口是按钮里那句 `layer = .icon`，不靠这种延时。
+    private func openIconLayerForProbeIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-icon") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { layer = .icon }
+    }
+
+    /// 头像弹动与金额放大（矩阵 EON-005/007）。
+    ///
+    /// 命令行点不动键盘，这里直接写状态 —— 走的仍是用户打字会走的那几条同一个
+    /// `.onChange` / `.focused`，不是另搭一条演示通路。
+    /// 两处对帧：头像那一弹是 0.14 秒的弹簧，settle 0.07 秒必落在升程上（拍「正在弹」），
+    /// 0.7 秒一定回到 1.0（拍「弹完」）；金额放那张要等 `Motion.pop` 收束，
+    /// 失焦那张要等它缩回去。探针每步先打一行时间戳，外面把截图和秒数对账。
+    private func runHeroProbeIfNeeded() async {
+        guard ProcessInfo.processInfo.arguments.contains("-saury-hero") else { return }
+        try? await Task.sleep(for: .seconds(1.4))
+        let focusAtOpen = focusedField == .name ? "名称" : String(describing: focusedField)
+        Self.heroProbeLogger.log("头像探针 表单打开：焦点在\(focusAtOpen, privacy: .public)，减少动态效果=\(reduceMotion, privacy: .public)")
+        _ = await ProbeShutter.capture("hero-00-form-open", settle: 0.2)
+
+        // ① 名字逐字变：头像画的就是名字首字，每打一个字弹一下 —— 先拍升程中间那一帧。
+        name = "阿里"
+        _ = await ProbeShutter.capture("hero-01-name-mid-bump", settle: 0.07)
+        name = "阿里云盘"
+        _ = await ProbeShutter.capture("hero-02-name-settled", settle: 0.7)
+
+        // ② 焦点移到金额、填上数字：字形放大一档（1.32 倍，靠 `priceEditing` 派生）。
+        moveFocus(1)
+        priceText = "128.5"
+        let zoomState = "金额放大判定：焦点在金额=\(focusedField == .price)，有内容=\(priceText.isEmpty == false)，"
+            + "放大中=\(priceEditing)"
+        Self.heroProbeLogger.log("头像探针 \(zoomState, privacy: .public)")
+        _ = await ProbeShutter.capture("hero-03-price-zoomed", settle: 0.6)
+
+        // ③ 失焦（等于收起键盘）：字形缩回常规大小。
+        focusedField = nil
+        _ = await ProbeShutter.capture("hero-04-price-normal", settle: 0.7)
+        Self.heroProbeLogger.log("头像探针 收尾：失焦后放大中=\(self.priceEditing)")
+    }
+
+    private static let heroProbeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
     #endif
 
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    /// 保存中、名称空着、金额读不出来、分摊没填、结束日期倒挂 —— 任何一种都不许写库。
+    private var canSave: Bool { report.canSave }
+
+    /// 校验只吃原始文本，所以「读不通」和「还没填」在这里是分开的两件事。
+    private var input: AddFormInput {
+        AddFormInput(name: name,
+                     priceText: priceText,
+                     currencyCode: currencyCode,
+                     shareEnabled: shareEnabled,
+                     shareMode: shareMode,
+                     shareText: shareMyText,
+                     startDate: startDate,
+                     endDateEnabled: endDateEnabled,
+                     endDate: endDate)
     }
+
+    private var report: AddFormReport { AddFormValidator.validate(input) }
+
+    /// 键盘上下键走的格子。「我的份额」没展开时不在链子上。
+    private var chain: FormFieldChain {
+        FormFieldChain(showingShare: shareEnabled && shareMode == .custom)
+    }
+
+    private var nameMessage: String? { report.message(for: .name, afterSubmit: submitTapped) }
+    private var priceMessage: String? { report.message(for: .price, afterSubmit: submitTapped) }
+    private var shareMessage: String? { report.message(for: .share, afterSubmit: submitTapped) }
+
+    private var hasUnsavedChanges: Bool { changes.isDirty(draft) }
+
+    /// 金额用解析器过一遍：币种精度、千分位、负数都在这里判，
+    /// 页面拿同一个结果决定能不能保存、提示什么。
+    private var parsedPrice: Money? { report.parsedPrice }
+
+    private var parsedShareMy: Money? { report.parsedShare }
 
     // MARK: - Hero
 
@@ -156,11 +407,31 @@ struct AddSubscriptionView: View {
         return Color(hex: preferences.accentHex) ?? .accentColor
     }
 
+    /// 字段级提示：一条红底小胶囊，紧挨着它说的那一格。
+    /// 没有内容时不占位，免得表单一直抖。
+    @ViewBuilder
+    private func fieldNote(_ issue: String?, title: String) -> some View {
+        if let issue {
+            HStack {
+                Spacer(minLength: 0)
+                Text(issue)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color(red: 0.82, green: 0.21, blue: 0.21)))
+                    .accessibilityLabel("\(title)这一格：\(issue)")
+                Spacer(minLength: 0)
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        }
+    }
+
     private var hero: some View {
         VStack(spacing: 10) {
             Button {
                 SelectionHaptics.impact(.light)
-                showingIconPicker = true
+                layer = .icon
             } label: {
                 ZStack(alignment: .bottomTrailing) {
                     heroIcon
@@ -178,7 +449,13 @@ struct AddSubscriptionView: View {
             }
             .buttonStyle(Pressable(scale: 0.94, animation: Motion.pop))
             .padding(.top, 4)
-            .onChange(of: iconSignature) { _, _ in bumpHeroIcon() }
+            .onChange(of: iconSignature) { _, _ in bumpHeroIcon(tick: true) }
+            .onChange(of: name) { _, _ in
+                // 还没选图标时，头像画的就是名字首字：名字在变，头像跟着弹（矩阵 EON-005）。
+                // 只在「正在填名字」这一种情况下弹，打开编辑页时回填的名字不算。
+                guard focusedField == .name, iconSymbol == nil, iconImageFile == nil else { return }
+                bumpHeroIcon(tick: false)
+            }
 
             TextField("名称", text: $name)
                 .font(.system(size: 26, weight: .bold, design: .rounded))
@@ -186,7 +463,10 @@ struct AddSubscriptionView: View {
                 .multilineTextAlignment(.center)
                 .focused($focusedField, equals: .name)
                 .submitLabel(.next)
-                .onSubmit { focusedField = .price }
+                .onSubmit { moveFocus(1) }
+                .id(FormField.name)
+
+            fieldNote(nameMessage, title: "名称")
 
             HStack(spacing: 6) {
                 Text(CurrencyCatalog.symbol(for: currencyCode))
@@ -200,10 +480,17 @@ struct AddSubscriptionView: View {
                     .keyboardType(.decimalPad)
                     .focused($focusedField, equals: .price)
                     .frame(width: 90)
+                    // 输入过程中把裸数字放大一号：每一笔都看得清，失焦回到常规字形（矩阵 EON-007）。
+                    .scaleEffect(priceEditing && !reduceMotion ? 1.32 : 1, anchor: .leading)
+                    .animation(Motion.pop, value: priceEditing)
+                    .id(FormField.price)
             }
 
+            // 金额填错当场说清是哪一条规则，不等到按下保存才弹一个笼统提示。
+            fieldNote(priceMessage, title: "金额")
+
             HStack(spacing: 8) {
-                Button { showingCurrencyPicker = true } label: {
+                Button { layer = .currency } label: {
                     HStack(spacing: 4) {
                         Text(currencyCode).font(.footnote.weight(.bold))
                             .contentTransition(.opacity)
@@ -216,7 +503,7 @@ struct AddSubscriptionView: View {
                 }
                 .buttonStyle(Pressable(scale: 0.92))
 
-                Button { showingPeriodPicker = true } label: {
+                Button { layer = .cycle } label: {
                     HStack(spacing: 4) {
                         Text(cycleTitle).font(.footnote.weight(.bold))
                             .contentTransition(.opacity)
@@ -243,13 +530,25 @@ struct AddSubscriptionView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .animation(Motion.page, value: heroTint)
+        .animation(Motion.ui, value: nameMessage)
+        .animation(Motion.ui, value: priceMessage)
     }
 
     /// 图标换了就弹一下：让「选中了什么」这件事有身体反应。
+    /// `tick` 分开给：选图标补一下触感；名字逐字符变只弹不响（键盘自己有声）。
     private var iconSignature: String { "\(iconSymbol ?? "")|\(iconImageFile ?? "")" }
 
-    private func bumpHeroIcon() {
-        SelectionHaptics.tick()
+    /// 正在填金额、且已经有内容：hero 上的数字放大一号。
+    private var priceEditing: Bool { focusedField == .price && priceText.isEmpty == false }
+
+    /// 没有图标时头像上画的那个字：名字首字，没名字就是加号。
+    private var fallbackInitial: String {
+        name.isEmpty ? "＋" : String(name.prefix(1)).uppercased()
+    }
+
+    private func bumpHeroIcon(tick: Bool) {
+        if tick { SelectionHaptics.tick() }
+        guard !reduceMotion else { return }
         withAnimation(.spring(duration: 0.14, bounce: 0.5)) { heroPop = true }
         withAnimation(Motion.pop.delay(0.14)) { heroPop = false }
     }
@@ -268,7 +567,7 @@ struct AddSubscriptionView: View {
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 26, style: .continuous).fill(.white.opacity(0.25))
-                    Text(name.isEmpty ? "＋" : String(name.prefix(1)).uppercased())
+                    Text(fallbackInitial)
                         .font(.system(size: 44, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
                 }
@@ -407,6 +706,9 @@ struct AddSubscriptionView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.trailing)
                     .focused($focusedField, equals: .plan)
+                    .submitLabel(.next)
+                    .onSubmit { moveFocus(1) }
+                    .id(FormField.plan)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
@@ -500,20 +802,31 @@ struct AddSubscriptionView: View {
 
     private var reminderSection: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("提前提醒").font(.subheadline)
-                Spacer()
-                Stepper(value: $reminderDays, in: 0...30) {
-                    Text(reminderDays == 0 ? "不提醒" : "\(reminderDays) 天")
-                        .font(.subheadline.monospacedDigit())
-                        .contentTransition(.numericText())
-                }
-                .fixedSize()
-                .onChange(of: reminderDays) { _, _ in SelectionHaptics.tick() }
+            Toggle(isOn: $remindersEnabled) {
+                Text("扣费提醒").font(.subheadline)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .animation(Motion.ui, value: reminderDays)
+            .padding(.vertical, 10)
+            .onChange(of: remindersEnabled) { _, on in if on { SelectionHaptics.tick() } }
+
+            if remindersEnabled {
+                Divider().overlay(SauryTheme.line).padding(.leading, 14)
+                HStack {
+                    Text("提前提醒").font(.subheadline)
+                    Spacer()
+                    Stepper(value: $reminderDays, in: 0...30) {
+                        // 0 是「当天」，不是「不提醒」—— 关掉提醒用上面那个开关。
+                        Text(reminderDays == 0 ? "当天" : "\(reminderDays) 天")
+                            .font(.subheadline.monospacedDigit())
+                            .contentTransition(.numericText())
+                    }
+                    .fixedSize()
+                    .onChange(of: reminderDays) { _, _ in SelectionHaptics.tick() }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             Divider().overlay(SauryTheme.line).padding(.leading, 14)
 
             Toggle(isOn: $endDateEnabled) {
@@ -530,11 +843,21 @@ struct AddSubscriptionView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .transition(.opacity.combined(with: .move(edge: .top)).combined(with: .scale(scale: 0.97)))
+                dateIssueRow
             }
         }
         .sauryCard()
         .animation(Motion.ui, value: endDateEnabled)
+        .animation(Motion.ui, value: remindersEnabled)
+        .animation(Motion.ui, value: report.dateIssue)
         .tint(heroTint)
+    }
+
+    /// 结束日期那行的字段级提示。日期不是键盘格子，所以不混进 `issues`。
+    private var dateIssueRow: some View {
+        fieldNote(report.dateIssue, title: "结束日期")
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
     }
 
     // MARK: - 分摊
@@ -556,6 +879,7 @@ struct AddSubscriptionView: View {
         .sauryCard()
         .animation(Motion.ui, value: shareEnabled)
         .animation(Motion.ui, value: shareMode)
+        .animation(Motion.ui, value: shareMessage)
         .tint(heroTint)
     }
 
@@ -610,10 +934,17 @@ struct AddSubscriptionView: View {
                         .multilineTextAlignment(.trailing)
                         .keyboardType(.decimalPad)
                         .frame(width: 90)
+                        .focused($focusedField, equals: .share)
+                        .id(FormField.share)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+
+                // 「我出的」以前读不通就静默存 0：这一格必须当场把话说出来。
+                fieldNote(shareMessage, title: "我的份额")
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
             }
 
             Divider().overlay(SauryTheme.line).padding(.leading, 14)
@@ -652,12 +983,9 @@ struct AddSubscriptionView: View {
     }
 
     private var mySharePerCycle: String {
-        let minor: Int
-        if shareMode == .custom {
-            minor = Int(((Double(shareMyText.replacingOccurrences(of: ",", with: ".")) ?? 0) * 100).rounded())
-        } else {
-            minor = Int((Double(priceMinor) / Double(shareHeadcount)).rounded())
-        }
+        let minor = shareMode == .custom
+            ? (parsedShareMy?.minorUnits ?? 0)
+            : Money.evenShare(totalMinorUnits: priceMinor, headcount: shareHeadcount)
         return Money(minorUnits: minor, currencyCode: currencyCode).formatted + "/" + cycleShort
     }
 
@@ -678,7 +1006,7 @@ struct AddSubscriptionView: View {
     private var paymentSection: some View {
         VStack(spacing: 0) {
             pickerRow("支付方式", value: paymentMethod, showsChevron: false) {
-                Button { showingPaymentPicker = true } label: {
+                Button { layer = .payment } label: {
                     HStack(spacing: 4) {
                         Text(paymentMethod).font(.subheadline)
                         Image(systemName: "chevron.up.chevron.down")
@@ -691,7 +1019,10 @@ struct AddSubscriptionView: View {
             TextField("写点什么，如账号、优惠、共享成员…", text: $notes, axis: .vertical)
                 .font(.subheadline)
                 .lineLimit(1...3)
-                .focused($focusedField, equals: .note)
+                .focused($focusedField, equals: .notes)
+                .submitLabel(.done)
+                .onSubmit { focusedField = nil }
+                .id(FormField.notes)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
         }
@@ -700,24 +1031,31 @@ struct AddSubscriptionView: View {
 
     // MARK: - 数据
 
-    private var priceMinor: Int {
-        Int(((Double(priceText.replacingOccurrences(of: ",", with: ".")) ?? 0) * 100).rounded())
-    }
+    private var priceMinor: Int { parsedPrice?.minorUnits ?? 0 }
 
     private func loadInitial() {
+        // 只认第一次。这一页被上层弹层盖住再回来时 `onAppear` 可能又响一次，
+        // 那时候重新加载会把用户正填的东西冲掉，草稿身份也会跟着换掉。
+        guard changes.hasAnchor == false else { return }
         guard let subscription = editing else {
+            // 每次开始一条新的录入都换一个新身份：
+            // 上一次新增留下的 id 不能变成这一条的主键。
+            newDraftID = UUID()
+            remindersEnabled = preferences.defaultRemindersEnabled
             reminderDays = preferences.defaultReminderDays
             currencyCode = preferences.defaultCurrency
-            if !prefillName.isEmpty {
-                name = prefillName
-                focusedField = .price
-            }
+            name = prefill.name
+            if let note = prefill.note, note.isEmpty == false { notes = note }
+            // 分享过来的图片：进页面就已经是选好的图标，用户只要确认别的格子。
+            iconImageFile = prefill.iconImageFile
+            // 焦点规则是定死的：新增永远停在第一个还没填的格子上。
+            // 名称被外部草稿预填过就从金额开始 —— 不是「打开时键盘出不出现看运气」。
+            focusedField = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .name : .price
+            changes.anchor(draft)
             return
         }
         name = subscription.name
-        priceText = subscription.priceMinorUnits % 100 == 0
-            ? String(subscription.priceMinorUnits / 100)
-            : String(format: "%.2f", subscription.priceMajor)
+        priceText = subscription.billAmount.amountText
         currencyCode = subscription.currencyCode
         cycle = subscription.cycle
         customMonths = subscription.customMonths
@@ -727,12 +1065,14 @@ struct AddSubscriptionView: View {
         startDate = subscription.startDate
         endDateEnabled = subscription.endDate != nil
         endDate = subscription.endDate ?? Date().addingTimeInterval(365 * 86400)
+        remindersEnabled = subscription.remindersEnabled
         reminderDays = subscription.reminderDays
         shareEnabled = subscription.shareEnabled
         shareHeadcount = subscription.shareHeadcount
         shareMode = subscription.shareMode
+        loadedShareMyMinorUnits = subscription.shareMyMinorUnits
         shareMyText = subscription.shareMode == .custom
-            ? String(format: "%.2f", Double(subscription.shareMyMinorUnits) / 100)
+            ? Money(minorUnits: subscription.shareMyMinorUnits, currencyCode: subscription.currencyCode).amountText
             : ""
         paymentMethod = subscription.paymentMethod.isEmpty ? "无" : subscription.paymentMethod
         notes = subscription.notes
@@ -740,67 +1080,85 @@ struct AddSubscriptionView: View {
         iconImageFile = subscription.iconImageFile
         iconColorHex = subscription.iconColorHex
         colorHexes = subscription.colorSpec.orderedHexes
+        // 编辑是来看和改的，不是来打字的：不把键盘顶上去挡住 hero。
+        changes.anchor(draft)
     }
 
-    private func save() {
-        let shareMyMinor = shareMode == .custom
-            ? Int(((Double(shareMyText.replacingOccurrences(of: ",", with: ".")) ?? 0) * 100).rounded())
-            : 0
+    /// 按下保存。数据不对时不写库、不关页，把话说清楚是哪一格（§7.1 第 9 条）。
+    private func submit() {
+        guard !isSaving else { return }
+        submitTapped = true
 
-        if let subscription = editing {
-            subscription.name = name.trimmingCharacters(in: .whitespaces)
-            subscription.plan = plan.trimmingCharacters(in: .whitespaces)
-            subscription.iconSymbolName = iconSymbol
-            subscription.iconImageFile = iconImageFile
-            subscription.iconColorHex = iconColorHex
-            subscription.colorSpec = CardColorSpec(hexes: colorHexes)
-            subscription.priceMinorUnits = priceMinor
-            subscription.currencyCode = currencyCode
-            subscription.cycle = cycle
-            subscription.customMonths = customMonths
-            subscription.categoryRawValue = categoryID
-            subscription.state = state
-            subscription.startDate = startDate
-            subscription.endDate = endDateEnabled ? endDate : nil
-            subscription.reminderDays = reminderDays
-            subscription.shareEnabled = shareEnabled
-            subscription.shareHeadcount = shareHeadcount
-            subscription.shareMode = shareMode
-            subscription.shareMyMinorUnits = shareMyMinor
-            subscription.paymentMethod = paymentMethod == "无" ? "" : paymentMethod
-            subscription.notes = notes
-            subscription.markUpdated()
-        } else {
-            let subscription = Subscription(
-                name: name.trimmingCharacters(in: .whitespaces),
-                plan: plan.trimmingCharacters(in: .whitespaces),
-                iconSymbolName: iconSymbol,
-                iconImageFile: iconImageFile,
-                iconColorHex: iconColorHex,
-                colorSpec: CardColorSpec(hexes: colorHexes),
-                priceMinorUnits: priceMinor,
-                currencyCode: currencyCode,
-                cycle: cycle,
-                customMonths: customMonths,
-                category: categoryID,
-                state: state,
-                startDate: startDate,
-                endDate: endDateEnabled ? endDate : nil,
-                reminderDays: reminderDays,
-                shareEnabled: shareEnabled,
-                shareHeadcount: shareHeadcount,
-                shareMode: shareMode,
-                shareMyMinorUnits: shareMyMinor,
-                paymentMethod: paymentMethod == "无" ? "" : paymentMethod,
-                notes: notes
-            )
-            modelContext.insert(subscription)
+        guard report.canSave else {
+            SelectionHaptics.error()
+            // 把焦点送到第一个有问题的格子：那一条字段级提示就长在那儿，
+            // 顺带把可能被滚出屏幕的那一行拉回来，而不是弹一句笼统的「请检查输入」。
+            focusedField = report.fieldsToFix.first
+            return
         }
+
+        isSaving = true
+        defer { isSaving = false }
+
+        do {
+            try repository.apply(draft)
+        } catch {
+            // 没写进库就不关页面：用户还在原地，字段没丢，改完还能再按一次。
+            SelectionHaptics.error()
+            feedback = .failure(error.localizedDescription)
+            return
+        }
+        // 成功触感、关页都排在落盘之后 —— 顺序反了就是「假装保存成功」。
+        // 存成之后就不再有「没保存的改动」，退场也不用再确认。
+        changes.anchor(draft)
         SelectionHaptics.success()
         dismiss()
     }
+
+    /// 取消。空着的表单直接收；填过东西就一定问一次，不留「静默丢掉」这条路。
+    private func cancel() {
+        guard hasUnsavedChanges else { dismiss(); return }
+        // 先收起键盘再问：键盘顶在上面会把确认框挤成半截，
+        // 而一个只看得见「丢弃」的确认框比不确认更糟。
+        focusedField = nil
+        showingDiscard = true
+    }
+
+    /// 「我出的」这一格藏起来的时候不该顺手抹掉原值：
+    /// 关掉分摊只是暂时不计入，用户上一次填的数字还得在。
+    private var draftShareMyMinorUnits: Int {
+        guard shareEnabled else { return loadedShareMyMinorUnits }
+        guard shareMode == .custom else { return 0 }
+        return parsedShareMy?.minorUnits ?? 0
+    }
+
+    /// 表单当前填的全部内容。编辑和新增都走同一份，保存才有「整字段覆盖」的语义。
+    private var draft: SubscriptionDraft {
+        SubscriptionDraft(
+            id: draftID,
+            name: name,
+            plan: plan,
+            iconSymbolName: iconSymbol,
+            iconImageFile: iconImageFile,
+            iconColorHex: iconColorHex,
+            colorSpec: CardColorSpec(hexes: colorHexes),
+            priceMinorUnits: priceMinor,
+            currencyCode: currencyCode,
+            cycle: cycle,
+            customMonths: customMonths,
+            category: categoryID,
+            state: state,
+            startDate: startDate,
+            endDate: endDateEnabled ? endDate : nil,
+            remindersEnabled: remindersEnabled,
+            reminderDays: reminderDays,
+            shareEnabled: shareEnabled,
+            shareHeadcount: shareHeadcount,
+            shareMode: shareMode,
+            shareMyMinorUnits: draftShareMyMinorUnits,
+            paymentMethod: paymentMethod == "无" ? "" : paymentMethod,
+            notes: notes
+        )
+    }
 }
 
-extension Subscription {
-    var priceMajor: Double { Double(priceMinorUnits) / 100 }
-}

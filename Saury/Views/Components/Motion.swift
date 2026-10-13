@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import os
 
 /// 触感：动效不止是看的，切换 / 确认 / 成功各给一下。
 enum SelectionHaptics {
@@ -9,6 +10,8 @@ enum SelectionHaptics {
     }
     static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
     static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
+    /// 写库失败专用：绝不能给失败操作配一个成功触感（方案 §9.4）。
+    static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
 }
 
 /// 全站动效词汇表。曲线全部用「快起步 + 长收束」的阻尼弹簧：
@@ -27,8 +30,6 @@ enum Motion {
     static let pop = Animation.spring(duration: 0.5, bounce: 0.34, blendDuration: 0)
     /// 列表行、卡片入场。
     static let entry = Animation.spring(duration: 0.5, bounce: 0.1, blendDuration: 0)
-    /// 卡片堆叠翻页定位：甩出去的那一下有轻微回弹。
-    static let carouselSnap = Animation.spring(duration: 0.5, bounce: 0.18, blendDuration: 0)
     /// 图表：环形扫描、柱子生长。
     static let chart = Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.86)
     /// 数字滚动：比竞品的 150ms 更慢一点，看得清位数，但收得更干净。
@@ -49,8 +50,11 @@ enum Motion {
 
 // MARK: - 滚动数字
 
-/// 真正按帧插值的金额：数值变化时从旧值滚到新值，位数逐位翻动。
-/// 竞品的数字是「整串模糊一闪」，这里是可插值的弹簧滚动 + 落定时轻微放大。
+/// 真正按帧插值的金额：数值变化时从**屏幕上此刻的那一个数**滚到新值。
+/// 竞品的数字是「整串模糊一闪」，这里是可插值的滚动 + 落定时轻微放大。
+///
+/// 时间轴只在真的在滚的时候才跑（`paused:`），间隔交给系统 ——
+/// 不写 `minimumInterval: 1/60`，否则 120Hz 的设备被这一行按回 60Hz（§9.3）。
 struct AnimatedNumber: View {
     let value: Double
     var format: (Double) -> String = { String(format: "%.2f", $0) }
@@ -60,11 +64,9 @@ struct AnimatedNumber: View {
     /// 首次出现时是否从 0 数上来。
     var countsFromZeroOnAppear: Bool = false
 
-    @State private var from = 0.0
-    @State private var target: Double
-    @State private var startDate = Date.distantPast
-    @State private var running = false
-    @State private var settle = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var roll: NumberRoll
+    @State private var emphasised = false
 
     init(value: Double, format: @escaping (Double) -> String = { String(format: "%.2f", $0) },
          font: Font = SauryTheme.amountFont(size: 40),
@@ -76,47 +78,113 @@ struct AnimatedNumber: View {
         self.duration = duration
         self.bounce = bounce
         self.countsFromZeroOnAppear = countsFromZeroOnAppear
-        _target = State(initialValue: value)
+        _roll = State(initialValue: NumberRoll(value: value, duration: duration, bounce: bounce))
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !running)) { timeline in
-            let elapsed = timeline.date.timeIntervalSince(startDate)
-            let x = min(max(elapsed / duration, 0), 1)
-            let current = from + (target - from) * Motion.spring(x, bounce: bounce)
-            Text(format(running ? current : target))
+        TimelineView(.animation(minimumInterval: nil, paused: !roll.isRolling)) { timeline in
+            Text(format(roll.value(at: timeline.date)))
                 .font(font)
                 .monospacedDigit()
                 .fixedSize(horizontal: true, vertical: false)
-                .scaleEffect(settle ? 1.03 : 1)
+                .scaleEffect(emphasised ? 1.03 : 1)
+                .onChange(of: timeline.date) { _, now in
+                    // 落定判断走的就是这一帧已经在用的那条插值：没有第二个定时器，
+                    // 也就没有「上一轮的收尾把这一轮关掉」这件事。
+                    if roll.finishIfDue(at: now) {
+                        #if DEBUG
+                        if Motion.numberProbeEnabled {
+                            Motion.probeLogger.log("数字探针 第\(self.roll.round, privacy: .public)轮落定 显示\(plain(self.roll.target), privacy: .public) 真值\(plain(self.value), privacy: .public)")
+                        }
+                        #endif
+                        withAnimation(Motion.pop) { emphasised = false }
+                    }
+                }
         }
         .onAppear {
-            from = countsFromZeroOnAppear ? 0 : target
-            if countsFromZeroOnAppear { roll(to: target) }
+            guard !roll.isRolling else { return }
+            if reduceMotion {
+                roll.prime(value)
+            } else if countsFromZeroOnAppear {
+                roll.prime(0)
+                startRoll(to: value, at: Date())
+            }
         }
-        .onChange(of: value) { previous, next in
-            guard next != previous else { return }
-            roll(to: next)
+        .onChange(of: value) { _, next in
+            startRoll(to: next, at: Date())
+        }
+        .onChange(of: reduceMotion) { _, off in
+            roll.duration = off ? 0 : duration
+            if off {
+                roll.stop()
+                withAnimation(.easeOut(duration: 0.12)) { emphasised = false }
+            }
+        }
+        .onDisappear {
+            // 页面走掉了就别再刷。屏幕上留最后那一个数，不假装中间发生过什么。
+            roll.stop()
         }
     }
 
-    private func roll(to next: Double) {
-        from = currentDisplayValue()
-        target = next
-        startDate = Date()
-        withAnimation(.easeOut(duration: 0.12)) { settle = true }
-        running = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            withAnimation(.spring(duration: 0.35, bounce: 0.25)) { settle = false }
-            running = false
+    private var durationForCurrentSettings: Double { reduceMotion ? 0 : duration }
+
+    /// 起新一轮。减少动态效果时 `roll` 直接把值钉过去，一轮都不起，也就没有放大回落。
+    private func startRoll(to next: Double, at now: Date) {
+        roll.duration = durationForCurrentSettings
+        let round = roll.roll(to: next, at: now)
+        #if DEBUG
+        if Motion.numberProbeEnabled {
+            Motion.probeLogger.log("数字探针 起第\(round, privacy: .public)轮 从\(plain(self.roll.value(at: now)), privacy: .public) 到 \(plain(next), privacy: .public) 目标值就是屏幕上这一格")
         }
+        #endif
+        guard roll.isRolling else { return }
+        withAnimation(.easeOut(duration: 0.12)) { emphasised = true }
     }
 
-    private func currentDisplayValue() -> Double {
-        let x = min(max(Date().timeIntervalSince(startDate) / duration, 0), 1)
-        return from + (target - from) * Motion.spring(x, bounce: bounce)
+    #if DEBUG
+    private func plain(_ value: Double) -> String { String(format: "%.2f", value) }
+    #endif
+}
+
+#if DEBUG
+extension Motion {
+    /// `-saury-number` 才打开的逐轮日志：录屏对不上哪一帧数到哪儿时用它。
+    static let numberProbeEnabled = ProcessInfo.processInfo.arguments.contains("-saury-number")
+    static let probeLogger = Logger(subsystem: "com.guofeng.saury", category: "probe")
+}
+
+/// 录屏对齐用的打点。日志用的是墙上时钟，录屏用的是录屏器自己的秒数，
+/// 两者对不上就只能量相对值 —— 「操作到首帧反馈」这种绝对量没法报。
+/// 这里在关键事件那一帧把状态栏下面那条带子刷白，日志同一句写下时刻；
+/// 事后拿视频里的白帧把两条时间轴钉在一起。带子和被量的区域不重叠。
+@MainActor
+final class ProbeMarker: ObservableObject {
+    static let shared = ProbeMarker()
+    @Published private(set) var flashing = false
+
+    /// 白帧留约两帧：一帧怕录屏正好丢掉对不上，再长就要盖住被量的动画了。
+    func mark(_ label: String) {
+        Motion.probeLogger.log("打点 \(label, privacy: .public)")
+        flashing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.034) { self.flashing = false }
     }
 }
+
+struct ProbeMarkerBand: View {
+    @ObservedObject private var marker = ProbeMarker.shared
+
+    var body: some View {
+        if marker.flashing {
+            Rectangle()
+                .fill(Color.white)
+                .frame(height: 18)
+                .padding(.horizontal, 120)
+                .padding(.top, 52)
+                .ignoresSafeArea()
+        }
+    }
+}
+#endif
 
 // MARK: - 分级入场
 
@@ -125,10 +193,21 @@ private struct StagedAppearance: ViewModifier {
     var delay: Double = 0
     var edge: Edge = .bottom
     var enabled: Bool = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown = false
 
     func body(content: Content) -> some View {
-        if enabled {
+        if !enabled {
+            content
+        } else if reduceMotion {
+            // §9.4：取消位移、缩放和模糊，只留极短的淡入。
+            // 「不让空白帧代替原动画」——内容当场就在，只是透明度收一下。
+            content
+                .opacity(shown ? 1 : 0)
+                .onAppear {
+                    withAnimation(.easeOut(duration: 0.12)) { shown = true }
+                }
+        } else {
             content
                 .opacity(shown ? 1 : 0)
                 .offset(y: shown ? 0 : (edge == .bottom ? 18 : -10))
@@ -139,8 +218,6 @@ private struct StagedAppearance: ViewModifier {
                         shown = true
                     }
                 }
-        } else {
-            content
         }
     }
 }
@@ -214,50 +291,21 @@ struct SlidingPill<Label: View, Value: Hashable>: View {
     }
 }
 
-// MARK: - 数值/尺寸动画
-
-/// 让任意 CGFloat 在 0 -> 1 之间用图表曲线生长一次（首帧触发）。
-struct GrowOnce: ViewModifier {
-    var delay: Double = 0
-    var duration: Double = 0.86
-    @State private var progress: CGFloat = 0
-
-    func body(content: Content) -> some View {
-        content.environment(\.growProgress, progress)
-            .onAppear {
-                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: duration).delay(delay)) {
-                    progress = 1
-                }
-            }
-    }
-}
-
-private struct GrowProgressKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
-
-extension EnvironmentValues {
-    /// 0 -> 1 的生长进度，图表读取它来做扫描 / 生长。
-    var growProgress: CGFloat {
-        get { self[GrowProgressKey.self] }
-        set { self[GrowProgressKey.self] = newValue }
-    }
-}
-
-extension View {
-    /// 包住图表，让里面的环形 / 柱状按进度生长。
-    func growOnce(delay: Double = 0, duration: Double = 0.86) -> some View {
-        modifier(GrowOnce(delay: delay, duration: duration))
-    }
-}
-
 // MARK: - 方向性切换
 
 /// 滑动量是唯一可动画的量，透明度和缩放都从它派生 ——
 /// 这样整段过渡连续插值，不会「位移到位才显形」。
+///
+/// 减少动态效果时把位移和缩放这两个出口关掉，但透明度**仍然由同一个 x 派生**：
+/// 于是过渡变成一次轻微淡入，进度到 1 的那一帧内容才完整 ——
+/// 既取消了我移，也不会出现「先空一下再显形」（§9.4）。
 private struct SlideFade: ViewModifier, Animatable {
     var x: CGFloat
     var distance: CGFloat
     var shrink: CGFloat
     var fade: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: CGFloat {
         get { x }
@@ -267,9 +315,9 @@ private struct SlideFade: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         let p = distance > 0 ? min(abs(x) / distance, 1) : 0
         content
-            .offset(x: x)
+            .offset(x: reduceMotion ? 0 : x)
             .opacity(1 - p * fade)
-            .scaleEffect(1 - p * shrink)
+            .scaleEffect(reduceMotion ? 1 : 1 - p * shrink)
     }
 }
 
@@ -300,12 +348,16 @@ struct AmbientSwing<Content: View>: View {
     var angle: Double = 8
     var period: Double = 2.6
     @ViewBuilder var content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var swung = false
 
     var body: some View {
         content
-            .rotationEffect(.degrees(swung ? angle : -angle), anchor: .top)
+            // §9.4「取消…倾斜和持续摆动」：不开摆的时候就是静止的那一格，
+            // 不是把内容藏起来等它摆回来。
+            .rotationEffect(.degrees(reduceMotion ? 0 : (swung ? angle : -angle)), anchor: .top)
             .onAppear {
+                guard !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: period).repeatForever(autoreverses: true)) {
                     swung = true
                 }

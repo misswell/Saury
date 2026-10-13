@@ -6,7 +6,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        // 快捷入口必须**先登记**再排通知：排进去的时候系统里没有这个类别，
+        // 那条通知就永远只有「点开」一种反应，用户看不到「稍后提醒」。
+        ReminderActions.register(in: center)
         return true
     }
 
@@ -23,7 +27,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        // 订阅提醒点开就是进 App；具体看哪一笔由首页自己呈现。
+        let intent = ReminderActions.intent(actionIdentifier: response.actionIdentifier,
+                                           userInfo: response.notification.request.content.userInfo)
+        // 这一脚是真的落了子（留痕 + 重排 / 记下要打开哪条），所以处理必须做完再回系统：
+        // 后台起来那一趟随时可能被系统掐掉，扔进 Task 里等它跑就等于没做。
+        MainActor.assumeIsolated {
+            ReminderInteraction.handle(intent,
+                                       preferences: .shared,
+                                       scheduler: .shared,
+                                       ledger: .shared,
+                                       container: PersistenceController.liveContainer)
+        }
         completionHandler()
     }
 }
