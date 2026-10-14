@@ -72,7 +72,9 @@ struct UpcomingChargeCarousel: View {
                                 lastTick = now
                             }
                     }
+#if DEBUG
                     .task { await runFlingProbeIfNeeded(width: proxy.size.width) }
+#endif
                 }
                 .frame(height: 128)
 

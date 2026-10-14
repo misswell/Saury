@@ -52,7 +52,9 @@ struct SubscriptionsView: View {
             }
         }
         .animation(Motion.page, value: preferences.subscriptionsViewMode)
+#if DEBUG
         .task { await runListProbeIfNeeded() }
+#endif
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(SauryTheme.background)
         .navigationTitle("")

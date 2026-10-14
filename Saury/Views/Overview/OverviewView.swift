@@ -44,8 +44,10 @@ struct OverviewView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .background(SauryTheme.background)
+#if DEBUG
         .task { await runPeriodProbeIfNeeded() }
         .task { await runChartProbeIfNeeded() }
+#endif
         .navigationTitle("")
         .toolbarBackground(.hidden, for: .navigationBar)
         .navigationDestination(for: Route.self) { route in

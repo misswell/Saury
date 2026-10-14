@@ -32,7 +32,9 @@ struct SubscriptionCalendarView: View {
             .padding(.bottom, 24)
         }
         .background(SauryTheme.background)
+#if DEBUG
         .task { await runCalendarFlipProbeIfNeeded() }
+#endif
         .navigationTitle("订阅日历")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
